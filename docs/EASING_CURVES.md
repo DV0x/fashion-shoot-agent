@@ -173,68 +173,51 @@ For v1, we're using **FFmpeg** because:
 | `circleopen` | Circular reveal |
 | `radial` | Radial wipe |
 
-### FFmpeg Easing Options
+### FFmpeg Native xfade Options
 
-FFmpeg's `xfade` filter supports these easing curves:
+**Important:** FFmpeg's native `xfade` filter does NOT have an `easing` parameter. It only supports:
 
-| Easing | Effect |
-|--------|--------|
-| `linear` | Constant rate (default) |
-| `quadratic` | Slow start, accelerates |
-| `cubic` | More pronounced acceleration |
-| `squareroot` | Fast start, decelerates |
-| `circular` | Circular easing |
+| Parameter | Description |
+|-----------|-------------|
+| `transition` | Visual effect (fade, wipe, dissolve, etc.) |
+| `duration` | Transition length in seconds |
+| `offset` | When transition starts |
+| `expr` | Custom expression for advanced transitions |
 
 ---
 
 ## Implementation Approach
 
-### Option 1: Simple Crossfade with Easing (Recommended for MVP)
+### Our Solution: Custom Expressions with Easing
+
+We use `transition=custom` with `expr` to implement easing via mathematical expressions.
+This is based on the [xfade-easing project](https://github.com/scriptituk/xfade-easing).
+
+**How it works:**
+1. Easing expression stores result in `st(0)`: e.g., `st(0,P*P*(3-2*P))` for smoothstep
+2. Transition expression reads from `ld(0)`: e.g., `A*ld(0)+B*(1-ld(0))` for fade
+3. Combined: `expr='st(0,P*P*(3-2*P));A*ld(0)+B*(1-ld(0))'`
 
 ```bash
-# Basic fade transition with cubic easing
+# Smooth fade transition (recommended for fashion)
 ffmpeg -i clip1.mp4 -i clip2.mp4 \
-  -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.5:offset=4.5:easing=cubic[v]" \
+  -filter_complex_threads 1 \
+  -filter_complex "[0:v][1:v]xfade=transition=custom:duration=1.2:offset=3.8:expr='st(0,P*P*(3-2*P));A*ld(0)+B*(1-ld(0))'[v]" \
   -map "[v]" output.mp4
 ```
 
-Parameters:
-- `transition=fade` - Type of transition
-- `duration=0.5` - Transition lasts 0.5 seconds
-- `offset=4.5` - Start transition at 4.5s (assuming 5s clips)
-- `easing=cubic` - Apply cubic easing
+**Note:** `-filter_complex_threads 1` is required because state variables (`st`/`ld`) aren't thread-safe.
 
-### Option 2: Multiple Clips with Chained xfade
+### Available Easing Expressions
 
-```bash
-# Stitch 6 clips with transitions
-ffmpeg \
-  -i clip1.mp4 -i clip2.mp4 -i clip3.mp4 \
-  -i clip4.mp4 -i clip5.mp4 -i clip6.mp4 \
-  -filter_complex "
-    [0:v][1:v]xfade=transition=fade:duration=0.5:offset=4.5:easing=cubic[v1];
-    [v1][2:v]xfade=transition=fade:duration=0.5:offset=9.0:easing=cubic[v2];
-    [v2][3:v]xfade=transition=fade:duration=0.5:offset=13.5:easing=cubic[v3];
-    [v3][4:v]xfade=transition=fade:duration=0.5:offset=18.0:easing=cubic[v4];
-    [v4][5:v]xfade=transition=fade:duration=0.5:offset=22.5:easing=cubic[v5]
-  " \
-  -map "[v5]" final_output.mp4
-```
-
-### Option 3: Speed Ramping for "Voluptuous" Feel
-
-For more dramatic easing, apply speed ramping at clip boundaries:
-
-```bash
-# Slow down end of clip (ease-out feel)
-ffmpeg -i clip.mp4 \
-  -filter:v "setpts=
-    if(gte(T,4),
-      PTS + (T-4)*0.5,
-      PTS
-    )" \
-  -an clip_eased.mp4
-```
+| Name | Expression | Feel |
+|------|------------|------|
+| linear | `st(0,P)` | Mechanical |
+| smooth | `st(0,P*P*(3-2*P))` | Classic smoothstep |
+| cubic-in | `st(0,1-(1-P)^3)` | Fast start, slow end |
+| cubic-out | `st(0,P^3)` | Slow start, fast end |
+| luxurious | `st(0,1-(1-P)^6)` | Very fast start, ultra gentle end |
+| sinusoidal-in-out | `st(0,(1-cos(P*PI))/2)` | Gentle both ends |
 
 ---
 
@@ -375,23 +358,34 @@ const opacity = interpolate(
 
 ## Summary
 
-### MVP Approach
-- **Tool**: FFmpeg with xfade filter
-- **Transition**: `fade` with `cubic` easing
-- **Duration**: 0.5 seconds overlap
+### Current Implementation
+- **Tool**: FFmpeg 8.x with xfade filter + custom expressions
+- **Transition**: `fade` (crossfade)
+- **Easing**: `smooth` (smoothstep function)
+- **Duration**: 1.2 seconds overlap
 - **Clips**: 6 keyframe videos from Kling 2.6
+
+### Recommended Command
+```bash
+npx tsx stitch-videos.ts \
+  --clips video-1.mp4 --clips video-2.mp4 ... \
+  --output final.mp4 \
+  --transition fade \
+  --easing smooth \
+  --transition-duration 1.2
+```
 
 ### Workflow
 ```
 1. Generate 6 keyframes (nano-banana) → contact sheet
 2. Extract individual frames
 3. Generate 6 video clips (Kling 2.6)
-4. Stitch with FFmpeg xfade transitions
+4. Stitch with FFmpeg xfade transitions + smooth easing
 5. Output final video
 ```
 
 ### Future Enhancements
-- Add Remotion for custom bezier curves
+- Add Remotion for true cubic-bezier curves
+- Fix fadeblack/fadewhite YUV color handling
 - Support for speed ramping
-- User-selectable easing presets
 - Audio track handling

@@ -14,10 +14,17 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 |-------|-------------|--------|--------|
 | Phase 1 | Project Setup & Skill Structure | ✅ Complete | `7bd2add` |
 | Phase 2 | Knowledge Skill (editorial-photography) | ✅ Complete | `c50ec14` |
-| Phase 3 | Action Skill (fashion-shoot-pipeline) | ⏳ Pending | - |
+| Phase 3 | Action Skill (fashion-shoot-pipeline) | ✅ Complete | - |
 | Phase 4 | Orchestrator System Prompt Update | ⏳ Pending | - |
 | Phase 5 | Session Management Integration | ⏳ Pending | - |
 | Phase 6 | Testing & Validation | ⏳ Pending | - |
+
+### Phase 3 Progress
+| Script | Status | Tested |
+|--------|--------|--------|
+| `generate-image.ts` | ✅ Complete | ✅ Yes |
+| `generate-video.ts` | ✅ Complete | ✅ Yes |
+| `stitch-videos.ts` | ✅ Complete | ✅ Yes |
 
 **Last Updated:** 2025-12-19
 
@@ -37,8 +44,9 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 - **Runtime:** Node.js + TypeScript
 - **Agent SDK:** @anthropic-ai/claude-agent-sdk
 - **Image Generation:** FAL.ai (nano-banana-pro)
-- **Video Generation:** FAL.ai (Kling 2.6)
-- **Video Stitching:** FFmpeg (fluent-ffmpeg)
+- **Video Generation:** FAL.ai (Kling 2.6 Pro)
+- **Video Stitching:** FFmpeg 8.x + fluent-ffmpeg
+- **Easing:** Custom xfade expressions (based on xfade-easing project)
 - **Architecture:** Agent Skills (no MCP)
 
 ---
@@ -126,107 +134,75 @@ Note: fluent-ffmpeg shows deprecation warning but still functions.
 
 ---
 
-### Phase 3: Action Skill (fashion-shoot-pipeline)
+### Phase 3: Action Skill (fashion-shoot-pipeline) ✅
 
-**Step 3.1: Create SKILL.md**
-```yaml
----
-name: fashion-shoot-pipeline
-description: Execute fashion photoshoot generation pipeline.
-  Use when generating hero images, contact sheets, frame isolations,
-  videos, or stitching final outputs via FAL.ai and FFmpeg.
----
+**Status:** Complete (2025-12-19)
+
+**Step 3.1: Create SKILL.md** ✅
+
+**Step 3.2: Create scripts/generate-image.ts** ✅
+
+Purpose: Wrapper for FAL.ai nano-banana-pro/edit API (image-to-image)
+
+```bash
+# Usage
+npx tsx scripts/generate-image.ts \
+  --prompt "Editorial fashion photo..." \
+  --input ref1.jpg --input ref2.jpg \
+  --output hero.png \
+  --aspect-ratio 3:2 \
+  --resolution 2K
 ```
 
-Content should include:
-- Pipeline stages overview
-- How to call each script
-- File path conventions
-- Progress tracking checklist
+Features:
+- Text-to-image and image-to-image modes
+- Multiple reference image support
+- Configurable aspect ratio and resolution
 
-**Step 3.2: Create scripts/generate-image.ts**
+**Step 3.3: Create scripts/generate-video.ts** ✅
 
-Purpose: Wrapper for FAL.ai nano-banana-pro API
+Purpose: Wrapper for FAL.ai Kling 2.6 Pro image-to-video API
 
-```typescript
-// Interface
-interface GenerateImageOptions {
-  prompt: string;
-  inputImages?: string[];      // Paths to reference images
-  outputPath: string;
-  aspectRatio?: string;        // Default: "3:2"
-  resolution?: string;         // "1K" | "2K"
-}
-
-// Usage via Bash
-// npx tsx scripts/generate-image.ts \
-//   --prompt "..." \
-//   --input ref1.jpg --input ref2.jpg \
-//   --output hero.png \
-//   --resolution 2K
+```bash
+# Usage
+npx tsx scripts/generate-video.ts \
+  --input frame-1.png \
+  --prompt "Camera slowly pushes in..." \
+  --output video-1.mp4 \
+  --duration 5
 ```
 
-Implementation:
-- Read FAL_KEY from environment
-- Upload input images to FAL.ai
-- Call nano-banana-pro endpoint
-- Download result to outputPath
-- Print result path to stdout
+Features:
+- 5s or 10s video duration
+- Optional audio generation
+- Async polling with progress logs
 
-**Step 3.3: Create scripts/generate-video.ts**
+**Step 3.4: Create scripts/stitch-videos.ts** ✅
 
-Purpose: Wrapper for FAL.ai Kling 2.6 image-to-video API
+Purpose: FFmpeg video stitching with smooth easing transitions
 
-```typescript
-// Interface
-interface GenerateVideoOptions {
-  inputImage: string;          // Path to source frame
-  prompt: string;              // Camera movement description
-  outputPath: string;
-  duration?: number;           // Default: 5 seconds
-}
-
-// Usage via Bash
-// npx tsx scripts/generate-video.ts \
-//   --input frame-1.png \
-//   --prompt "Camera slowly pushes in..." \
-//   --output video-1.mp4
+```bash
+# Usage (recommended for fashion)
+npx tsx scripts/stitch-videos.ts \
+  --clips video-1.mp4 --clips video-2.mp4 ... \
+  --output final.mp4 \
+  --transition fade \
+  --easing smooth \
+  --transition-duration 1.2
 ```
 
-Implementation:
-- Read FAL_KEY from environment
-- Upload input image
-- Call Kling 2.6 endpoint
-- Poll for completion (async generation)
-- Download result to outputPath
+Features:
+- **16 easing curves:** linear, quadratic-*, cubic-*, quartic-*, quintic-*, sinusoidal-*, smooth, luxurious, cinematic
+- **13 transitions:** fade, fadeblack, fadewhite, wipe*, slide*, circle*, dissolve
+- Custom FFmpeg expressions via xfade filter
+- Auto-detects clip durations via ffprobe
+- Recommended: `--transition fade --easing smooth --transition-duration 1.2`
 
-**Step 3.4: Create scripts/stitch-videos.ts**
-
-Purpose: FFmpeg video stitching with cubic easing
-
-```typescript
-// Interface
-interface StitchOptions {
-  clips: string[];             // Array of video paths (ordered)
-  outputPath: string;
-  transitionDuration?: number; // Default: 0.5
-  transitionType?: string;     // Default: "fade"
-  easing?: string;             // Default: "cubic"
-}
-
-// Usage via Bash
-// npx tsx scripts/stitch-videos.ts \
-//   --clips video-1.mp4 video-2.mp4 ... video-6.mp4 \
-//   --output final-output.mp4 \
-//   --transition fade \
-//   --easing cubic
-```
-
-Implementation:
-- Use fluent-ffmpeg
-- Build xfade filter chain
-- Apply cubic easing to transitions
-- Output final video
+Implementation Details:
+- Uses `transition=custom` with `expr` parameter for easing
+- Easing stored in `st(0)`, transitions read from `ld(0)`
+- Requires `-filter_complex_threads 1` for state variables
+- Based on xfade-easing project expressions
 
 ---
 
@@ -362,11 +338,17 @@ package.json                       # Add fluent-ffmpeg dependency
 
 ## Success Criteria
 
+### Scripts (Phase 3) ✅
+- [x] `generate-image.ts` generates images via FAL.ai nano-banana-pro
+- [x] `generate-video.ts` generates videos via FAL.ai Kling 2.6
+- [x] `stitch-videos.ts` stitches videos with smooth easing transitions
+
+### Pipeline (Phases 4-6)
 - [ ] Agent analyzes reference images and describes contents
 - [ ] Agent generates detailed prompts from one-line input
 - [ ] Hero image generates successfully via FAL.ai
 - [ ] Contact sheet generates with 6 distinct angles
 - [ ] All 6 frames isolate correctly
 - [ ] All 6 videos generate with camera movement
-- [ ] Final video stitches with smooth cubic easing transitions
+- [ ] Final video stitches with smooth transitions
 - [ ] Full pipeline completes in single agent session
