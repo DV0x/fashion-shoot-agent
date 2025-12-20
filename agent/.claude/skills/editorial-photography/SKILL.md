@@ -1,87 +1,75 @@
 ---
 name: editorial-photography
-description: Professional fashion and editorial photography knowledge. Use when planning camera angles, designing shot lists, or crafting image generation prompts for fashion photoshoots.
+description: Execute the Tim workflow for fashion editorial photography. Use when generating hero images, contact sheets, and frame isolations. This skill provides EXACT prompt templates - do not improvise or deviate from the templates.
 ---
 
-# Editorial Photography Skill
+# Editorial Photography Skill (Tim Workflow)
 
-Professional knowledge for fashion and editorial photography, including camera techniques, prompt engineering, and the Tim workflow 6-shot pattern.
+This skill provides **exact prompt templates** for the Tim workflow fashion pipeline.
 
-## When to Use This Skill
+## CRITICAL: No Improvisation
 
-Invoke this skill when you need to:
-- Plan camera angles and shot compositions for a fashion shoot
-- Design a 6-frame contact sheet shot list
-- Craft detailed prompts for AI image generation
-- Understand the Tim workflow pattern
-- Apply consistent visual styles (e.g., Fuji Velvia)
+- **DO NOT** change camera angles or shot types
+- **DO NOT** modify the style block (Fuji Velvia treatment)
+- **DO NOT** skip or reorder pipeline stages
+- **DO** fill in placeholders with details from reference image analysis
+- **DO** follow the exact prompt structure
 
-## Available Knowledge
+## When to Use
 
-### Core Knowledge (`core/`)
+Invoke this skill when:
+- User provides reference images for a fashion shoot
+- You need to generate hero image, contact sheet, or frame isolations
+- You need the exact prompt templates for image generation
 
-| Document | Content |
-|----------|---------|
-| `camera-fundamentals.md` | Camera positions (height, lateral), angle types, the 6-angle system, lens choices, composition rules, depth of field, i2v movement concepts |
-| `prompt-assembly.md` | Prompt structure, block types, assembly patterns for hero/contact sheet/isolation, creative section guidelines, quality checklist |
+## Workflow Overview
 
-### Style Guides (`styles/`)
+```
+Stage 1: ANALYZE     → Extract details from user's reference images
+Stage 2: HERO        → Generate full-body hero shot
+Stage 3: CONTACT     → Generate 2×3 grid (6 camera angles)
+Stage 4: ISOLATE     → Extract each frame (6 times)
+Stage 5: VIDEO       → Generate video from each frame (6 times)
+Stage 6: STITCH      → Combine videos with transitions
+```
 
-| Document | Content |
-|----------|---------|
-| `fashion-tim.md` | Tim workflow 6-shot pattern, grid layout, frame descriptions, pipeline stages, frame isolation technique, key principles |
+## The 6 Camera Angles (FIXED - Never Change)
 
-### Templates (`templates/`)
-
-| Document | Content |
-|----------|---------|
-| `injection-blocks.md` | ANALYSIS_BLOCK, CONTINUITY_BLOCK, CONTACT_SHEET_FORMAT, 6-FRAME SHOT LIST, TECHNICAL_REQUIREMENTS, FRAME_ISOLATION_TEMPLATE |
-| `style-fuji-velvia.md` | Fuji Velvia style block, parameters, lighting characteristics, variations, alternative styles |
+```
+┌─────────────────┬─────────────────┬─────────────────┐
+│  Frame 1 (R1C1) │  Frame 2 (R1C2) │  Frame 3 (R1C3) │
+│  Beauty Portrait│  High-Angle 3/4 │  Low-Angle Full │
+├─────────────────┼─────────────────┼─────────────────┤
+│  Frame 4 (R2C1) │  Frame 5 (R2C2) │  Frame 6 (R2C3) │
+│  Side-On Profile│  Intimate Close │  Extreme Detail │
+└─────────────────┴─────────────────┴─────────────────┘
+```
 
 ## How to Use
 
-### For Shot Planning
-1. Read `core/camera-fundamentals.md` for angle and position options
-2. Read `styles/fashion-tim.md` for the 6-shot pattern structure
-3. Adapt frame descriptions to the specific subject/wardrobe
+1. Read `workflows/tim-workflow-templates.md` for all prompt templates
+2. Follow the ANALYSIS PHASE to extract reference details
+3. Fill placeholders in templates with extracted details
+4. Execute prompts through the fashion-shoot-pipeline scripts
 
-### For Prompt Crafting
-1. Read `core/prompt-assembly.md` for structure guidelines
-2. Read `templates/injection-blocks.md` for reusable fragments
-3. Read `templates/style-fuji-velvia.md` for visual treatment
-4. Assemble blocks in the correct order
+## Available Templates
 
-### For Contact Sheet Generation
-1. Use ANALYSIS_BLOCK to inventory reference images
-2. Use CONTINUITY_BLOCK to enforce consistency
-3. Use CONTACT_SHEET_FORMAT for output specification
-4. Include 6-FRAME SHOT LIST with adapted descriptions
-5. Add STYLE_BLOCK for visual treatment
-6. Specify aspect ratio (3:2)
+| Template | Purpose | Placeholders |
+|----------|---------|--------------|
+| `HERO_PROMPT` | Full-body hero shot | `{SUBJECT}`, `{WARDROBE}`, `{ACCESSORIES}`, `{POSE}`, `{BACKGROUND}` |
+| `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` (optional override) |
+| `FRAME_ISOLATION_PROMPT` | Extract single frame | `{ROW}`, `{COLUMN}` |
+| `VIDEO_PROMPTS` | Camera movements | Pre-defined per frame type |
 
-### For Frame Isolation
-Use the template from `injection-blocks.md`:
-```
-Isolate and amplify the key frame in row {R} column {C}.
-Keep all details exactly the same.
-```
+## Style Treatment (FIXED)
 
-## Quick Reference: 6-Frame Grid
+All images use this exact style block - never modify:
 
 ```
-┌───────────┬───────────┬───────────┐
-│  R1 C1    │  R1 C2    │  R1 C3    │
-│  Beauty   │ High-Angle│ Low-Angle │
-├───────────┼───────────┼───────────┤
-│  R2 C1    │  R2 C2    │  R2 C3    │
-│  Side-On  │ Intimate  │ Detail    │
-└───────────┴───────────┴───────────┘
+The image is shot on fuji velvia film on a 55mm prime lens with a hard flash,
+the light is concentrated on the subject and fades slightly toward the edges
+of the frame. The image is over exposed showing significant film grain and is
+oversaturated. The skin appears shiny (almost oily).
+
+3:2 aspect ratio
 ```
-
-## Key Principles
-
-1. **Spatial dynamism** - Frames must be non-linear, not wide→mid→close
-2. **Resting frames** - Describe end positions, not motion
-3. **Perfect continuity** - Identical wardrobe/styling/lighting across frames
-4. **Same scene** - Different camera positions, not different scenes
-5. **Style consistency** - Apply visual treatment uniformly

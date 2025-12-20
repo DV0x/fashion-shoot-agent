@@ -7,6 +7,27 @@ import * as path from 'path';
  * Based on Claude SDK session management patterns
  */
 
+// Pipeline stages for the Tim workflow
+export type PipelineStage =
+  | 'initialized'
+  | 'analyzing'
+  | 'generating-hero'
+  | 'generating-contact-sheet'
+  | 'isolating-frames'
+  | 'generating-videos'
+  | 'stitching'
+  | 'completed'
+  | 'error';
+
+// Asset paths generated during pipeline
+export interface PipelineAssets {
+  hero?: string;
+  contactSheet?: string;
+  frames: string[];      // frame-1.png through frame-6.png
+  videos: string[];      // video-1.mp4 through video-6.mp4
+  finalVideo?: string;
+}
+
 export interface SessionInfo {
   id: string;
   sdkSessionId?: string;  // The actual SDK session ID
@@ -25,6 +46,14 @@ export interface SessionInfo {
   };
   messages: any[];  // Store message history
   turnCount: number;
+  // Pipeline tracking
+  pipeline?: {
+    stage: PipelineStage;
+    stageStartedAt?: Date;
+    assets: PipelineAssets;
+    inputImages: string[];  // Reference images provided by user
+    error?: string;
+  };
 }
 
 export class SessionManager {
@@ -97,8 +126,37 @@ export class SessionManager {
       }
     }
 
-    // Create new session
-    return this.createSession(metadata);
+    // Create new session - use provided sessionId if given
+    return this.createSessionWithId(sessionId, metadata);
+  }
+
+  /**
+   * Create a session with a specific ID (or generate one if not provided)
+   */
+  private async createSessionWithId(sessionId?: string, metadata: Partial<SessionInfo['metadata']> = {}): Promise<SessionInfo> {
+    const id = sessionId || `session_${randomUUID()}`;
+
+    const session: SessionInfo = {
+      id,
+      createdAt: new Date(),
+      lastAccessedAt: new Date(),
+      metadata: {
+        status: 'active',
+        messageCount: 0,
+        ...metadata
+      },
+      messages: [],
+      turnCount: 0
+    };
+
+    this.sessions.set(id, session);
+
+    if (this.autoSave) {
+      await this.saveSession(id);
+    }
+
+    console.log(`📁 Created new session: ${id}`);
+    return session;
   }
 
   /**
@@ -336,6 +394,234 @@ export class SessionManager {
       baseSession: baseSession || null,
       forks
     };
+  }
+
+  // ============================================
+  // Pipeline Management Methods
+  // ============================================
+
+  /**
+   * Create output directories for a session
+   * Creates: outputs/, outputs/frames/, outputs/videos/, outputs/final/
+   */
+  async createSessionDirectories(sessionId: string): Promise<string> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    // Create session-specific output directory
+    const sessionOutputDir = path.join(this.sessionDirectory, sessionId, 'outputs');
+    const directories = [
+      sessionOutputDir,
+      path.join(sessionOutputDir, 'frames'),
+      path.join(sessionOutputDir, 'videos'),
+      path.join(sessionOutputDir, 'final')
+    ];
+
+    for (const dir of directories) {
+      await fs.mkdir(dir, { recursive: true });
+    }
+
+    // Initialize pipeline state
+    session.pipeline = {
+      stage: 'initialized',
+      stageStartedAt: new Date(),
+      assets: {
+        frames: [],
+        videos: []
+      },
+      inputImages: []
+    };
+
+    console.log(`📁 Created output directories for session: ${sessionId}`);
+    console.log(`   ${sessionOutputDir}`);
+
+    if (this.autoSave) {
+      await this.saveSession(sessionId);
+    }
+
+    return sessionOutputDir;
+  }
+
+  /**
+   * Get the output directory path for a session
+   */
+  getSessionOutputDir(sessionId: string): string {
+    return path.join(this.sessionDirectory, sessionId, 'outputs');
+  }
+
+  /**
+   * Update pipeline stage
+   */
+  async updatePipelineStage(sessionId: string, stage: PipelineStage, error?: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    if (!session.pipeline) {
+      session.pipeline = {
+        stage: 'initialized',
+        assets: { frames: [], videos: [] },
+        inputImages: []
+      };
+    }
+
+    session.pipeline.stage = stage;
+    session.pipeline.stageStartedAt = new Date();
+
+    if (error) {
+      session.pipeline.error = error;
+    }
+
+    session.lastAccessedAt = new Date();
+
+    const stageEmojis: Record<PipelineStage, string> = {
+      'initialized': '🚀',
+      'analyzing': '🔍',
+      'generating-hero': '🎨',
+      'generating-contact-sheet': '📸',
+      'isolating-frames': '🖼️',
+      'generating-videos': '🎬',
+      'stitching': '🎞️',
+      'completed': '✅',
+      'error': '❌'
+    };
+
+    console.log(`${stageEmojis[stage]} Pipeline stage: ${stage} (session: ${sessionId})`);
+
+    if (this.autoSave) {
+      await this.saveSession(sessionId);
+    }
+  }
+
+  /**
+   * Add input images to session
+   */
+  async addInputImages(sessionId: string, imagePaths: string[]): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    if (!session.pipeline) {
+      session.pipeline = {
+        stage: 'initialized',
+        assets: { frames: [], videos: [] },
+        inputImages: []
+      };
+    }
+
+    session.pipeline.inputImages = imagePaths;
+    session.lastAccessedAt = new Date();
+
+    console.log(`📷 Added ${imagePaths.length} input images to session: ${sessionId}`);
+
+    if (this.autoSave) {
+      await this.saveSession(sessionId);
+    }
+  }
+
+  /**
+   * Add a generated asset to session
+   */
+  async addAsset(
+    sessionId: string,
+    assetType: 'hero' | 'contactSheet' | 'frame' | 'video' | 'finalVideo',
+    assetPath: string,
+    index?: number
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    if (!session.pipeline) {
+      session.pipeline = {
+        stage: 'initialized',
+        assets: { frames: [], videos: [] },
+        inputImages: []
+      };
+    }
+
+    switch (assetType) {
+      case 'hero':
+        session.pipeline.assets.hero = assetPath;
+        break;
+      case 'contactSheet':
+        session.pipeline.assets.contactSheet = assetPath;
+        break;
+      case 'frame':
+        if (index !== undefined && index >= 0 && index < 6) {
+          session.pipeline.assets.frames[index] = assetPath;
+        }
+        break;
+      case 'video':
+        if (index !== undefined && index >= 0 && index < 6) {
+          session.pipeline.assets.videos[index] = assetPath;
+        }
+        break;
+      case 'finalVideo':
+        session.pipeline.assets.finalVideo = assetPath;
+        break;
+    }
+
+    session.lastAccessedAt = new Date();
+
+    console.log(`💾 Added ${assetType} asset: ${path.basename(assetPath)}`);
+
+    if (this.autoSave) {
+      await this.saveSession(sessionId);
+    }
+  }
+
+  /**
+   * Get pipeline status for a session
+   */
+  getPipelineStatus(sessionId: string): {
+    stage: PipelineStage;
+    assets: PipelineAssets;
+    inputImages: string[];
+    progress: number;
+    error?: string;
+  } | null {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.pipeline) {
+      return null;
+    }
+
+    // Calculate progress percentage
+    const stageProgress: Record<PipelineStage, number> = {
+      'initialized': 0,
+      'analyzing': 10,
+      'generating-hero': 20,
+      'generating-contact-sheet': 35,
+      'isolating-frames': 50,
+      'generating-videos': 75,
+      'stitching': 90,
+      'completed': 100,
+      'error': -1
+    };
+
+    return {
+      stage: session.pipeline.stage,
+      assets: session.pipeline.assets,
+      inputImages: session.pipeline.inputImages,
+      progress: stageProgress[session.pipeline.stage],
+      error: session.pipeline.error
+    };
+  }
+
+  /**
+   * Get all assets for a session
+   */
+  getSessionAssets(sessionId: string): PipelineAssets | null {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.pipeline) {
+      return null;
+    }
+    return session.pipeline.assets;
   }
 }
 

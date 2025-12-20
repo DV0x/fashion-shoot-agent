@@ -13,10 +13,10 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 | Phase | Description | Status | Commit |
 |-------|-------------|--------|--------|
 | Phase 1 | Project Setup & Skill Structure | ✅ Complete | `7bd2add` |
-| Phase 2 | Knowledge Skill (editorial-photography) | ✅ Complete | `c50ec14` |
+| Phase 2 | Knowledge Skill (editorial-photography) | ✅ Refactored | - |
 | Phase 3 | Action Skill (fashion-shoot-pipeline) | ✅ Complete | - |
-| Phase 4 | Orchestrator System Prompt Update | ⏳ Pending | - |
-| Phase 5 | Session Management Integration | ⏳ Pending | - |
+| Phase 4 | Orchestrator System Prompt Update | ✅ Complete | - |
+| Phase 5 | Session Management Integration | ✅ Complete | - |
 | Phase 6 | Testing & Validation | ⏳ Pending | - |
 
 ### Phase 3 Progress
@@ -62,9 +62,7 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 agent/.claude/skills/
 ├── editorial-photography/
 │   ├── SKILL.md
-│   ├── core/
-│   ├── styles/
-│   └── templates/
+│   └── workflows/
 └── fashion-shoot-pipeline/
     ├── SKILL.md
     └── scripts/
@@ -83,54 +81,64 @@ Note: fluent-ffmpeg shows deprecation warning but still functions.
 
 ---
 
-### Phase 2: Knowledge Skill (editorial-photography) ✅
+### Phase 2: Knowledge Skill (editorial-photography) ✅ REFACTORED
 
-**Status:** Complete (commit `c50ec14`)
+**Status:** Refactored (2025-12-19)
+
+**Refactoring Decision:** Original implementation used guideline-based files that allowed LLM improvisation. Refactored to strict template-based approach with exact prompts from Tim workflow spec.
+
+#### Original Approach (Removed)
+```
+❌ core/camera-fundamentals.md    - Guidelines, allowed interpretation
+❌ core/prompt-assembly.md        - Patterns, allowed creativity
+❌ styles/fashion-tim.md          - Flexible, "adapt as needed"
+❌ templates/injection-blocks.md  - Building blocks, assembly required
+❌ templates/style-fuji-velvia.md - Style options, variations
+```
+
+#### New Approach (Template-Based)
+```
+✅ SKILL.md                              - Strict instructions, no improvisation
+✅ workflows/tim-workflow-templates.md   - Exact prompts with {PLACEHOLDERS}
+```
 
 **Step 2.1: Create SKILL.md** ✅
-- Skill definition with usage instructions
-- Quick reference for 6-frame grid
-- Key principles summary
+- Strict "DO NOT improvise" instructions
+- Fixed 6-camera angle reference
+- Locked style treatment (Fuji Velvia)
+- Clear workflow stages
 
-**Step 2.2: Create core/camera-fundamentals.md** ✅ (~180 lines)
-- Camera positions (height: eye-level, high, low, worm's eye, bird's eye)
-- Lateral positions (frontal, three-quarter, profile)
-- The Tim Workflow 6-Angle System with detailed descriptions
-- Lens choices and focal length effects
-- Composition rules
-- Depth of field guidelines
-- Camera movement concepts for i2v
+**Step 2.2: Create workflows/tim-workflow-templates.md** ✅ (~350 lines)
 
-**Step 2.3: Create core/prompt-assembly.md** ✅ (~170 lines)
-- Prompt structure overview
-- Block types (Analysis, Continuity, Creative, Style, Output)
-- Assembly patterns for Hero, Contact Sheet, Frame Isolation, Narrative
-- Creative section guidelines with vocabulary
-- Quality checklist
+Contains exact prompts for each pipeline stage:
 
-**Step 2.4: Create styles/fashion-tim.md** ✅ (~130 lines)
-- Tim workflow 6-shot pattern (technique-focused, wardrobe-agnostic)
-- Grid layout with frame descriptions
-- Pipeline stages overview
-- Frame isolation technique
-- Key principles (spatial dynamism, resting frames, continuity)
-- Note: Made wardrobe-agnostic - user provides reference images
+| Template | Purpose | Adaptable Parts |
+|----------|---------|-----------------|
+| `HERO_PROMPT` | Full-body hero shot | `{SUBJECT}`, `{WARDROBE}`, `{ACCESSORIES}`, `{POSE}`, `{BACKGROUND}` |
+| `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` only |
+| `FRAME_ISOLATION_PROMPT` | Extract single frame | `{ROW}`, `{COLUMN}` |
+| `VIDEO_PROMPTS` | Camera movements | None - fixed per frame type |
 
-**Step 2.5: Create templates/injection-blocks.md** ✅ (~140 lines)
-- ANALYSIS_BLOCK - Input image inventory
-- CONTINUITY_BLOCK - Consistency enforcement
-- CONTACT_SHEET_FORMAT - 2×3 grid specification
-- 6-FRAME SHOT LIST - Complete camera position descriptions
-- TECHNICAL_REQUIREMENTS - Quality and continuity specs
-- FRAME_ISOLATION_TEMPLATE - Row/column extraction
+**Key Design Decisions:**
 
-**Step 2.6: Create templates/style-fuji-velvia.md** ✅ (~100 lines)
-- Fuji Velvia style block (copy-paste ready)
-- Extended style block with lens spec
-- Style parameters table
-- Lighting characteristics
-- Variations (warmer, cooler, higher grain)
-- Alternative styles (Kodak Portra, B&W, Digital Clean)
+1. **Fixed Elements (Never Change):**
+   - 6 camera angles (beauty, high-angle, low-angle, side-on, intimate, detail)
+   - Style treatment (Fuji Velvia, overexposed, grain, 3:2)
+   - Pipeline stages and order
+   - Video movement patterns per frame type
+
+2. **Adaptable Elements (From Reference Analysis):**
+   - Subject description (age, gender, features)
+   - Wardrobe details (garments, fit, colors)
+   - Accessories (specific items)
+   - Pose and expression
+   - Background color
+
+3. **Analysis Phase:**
+   - Agent MUST analyze reference images first
+   - Extract: SUBJECT, WARDROBE, ACCESSORIES, POSE, BACKGROUND
+   - Fill placeholders with extracted details
+   - No creative interpretation allowed
 
 ---
 
@@ -139,6 +147,9 @@ Note: fluent-ffmpeg shows deprecation warning but still functions.
 **Status:** Complete (2025-12-19)
 
 **Step 3.1: Create SKILL.md** ✅
+- Script execution instructions
+- Clear dependency on editorial-photography skill for prompts
+- "Do NOT write your own prompts" instruction
 
 **Step 3.2: Create scripts/generate-image.ts** ✅
 
@@ -206,63 +217,79 @@ Implementation Details:
 
 ---
 
-### Phase 4: Orchestrator System Prompt Update
+### Phase 4: Orchestrator System Prompt Update ✅
 
-**Step 4.1: Update server/lib/orchestrator-prompt.ts**
+**Status:** Complete (2025-12-19)
 
-The orchestrator prompt should:
-- Describe the agent's role as a fashion photoshoot director
-- Explain the 6-stage pipeline
-- Instruct when to trigger each skill
-- Define file path conventions for sessions
+**Step 4.1: Update server/lib/orchestrator-prompt.ts** ✅
 
-Key sections:
-```markdown
-## Your Role
-You are a professional fashion photography director. You analyze
-reference images, plan creative shot lists, and orchestrate the
-generation pipeline.
+Updated with comprehensive system prompt (~215 lines) that includes:
 
-## Pipeline Stages
-1. Reference Analysis - Analyze input images (multimodal)
-2. Hero Image - Generate full-body hero shot
-3. Contact Sheet - Generate 2×3 grid with 6 angles
-4. Frame Isolation - Extract and enhance each frame
-5. Video Generation - Create camera movement videos
-6. Video Stitching - Combine into final output
+1. **CRITICAL RULES section** - NO IMPROVISATION, fixed camera angles, fixed style
+2. **Role definition** - Pipeline executor, not creative director
+3. **Pipeline stages** - Clear 6-stage breakdown
+4. **Step-by-step instructions** - Exact commands for each stage
+5. **File structure** - Output directory conventions
+6. **Error handling** - What to do when things fail
+7. **What NOT to do** - Explicit prohibitions
 
-## File Conventions
-sessions/{session-id}/
-├── inputs/       # Reference images
-├── outputs/      # Generated assets
-│   ├── hero.png
-│   ├── contact-sheet.png
-│   ├── frames/
-│   ├── videos/
-│   └── final/
-
-## Skill Usage
-- Use editorial-photography skill when planning shots
-- Use fashion-shoot-pipeline skill when generating assets
-```
+Key features:
+- Instructs agent to read `tim-workflow-templates.md` first
+- Shows exact bash commands for each script
+- Includes all 6 frame isolation prompts
+- Includes all 6 video movement prompts
+- Specifies exact stitch settings (fade/smooth/1.2s)
+- Quick reference table at the end
 
 ---
 
-### Phase 5: Session Management Integration
+### Phase 5: Session Management Integration ✅
 
-**Step 5.1: Update session-manager.ts**
+**Status:** Complete (2025-12-19)
 
-Add methods for:
-- Creating session output directories
-- Tracking pipeline stage progress
-- Storing generated asset paths in metadata
+**Step 5.1: Update session-manager.ts** ✅
 
-**Step 5.2: Update sdk-server.ts**
+Added pipeline tracking types and methods:
 
-Ensure the `/generate` endpoint:
-- Creates session directory structure
-- Passes input image paths to the agent
-- Returns final output paths in response
+```typescript
+// New types
+type PipelineStage = 'initialized' | 'analyzing' | 'generating-hero' |
+  'generating-contact-sheet' | 'isolating-frames' | 'generating-videos' |
+  'stitching' | 'completed' | 'error';
+
+interface PipelineAssets {
+  hero?: string;
+  contactSheet?: string;
+  frames: string[];      // frame-1.png through frame-6.png
+  videos: string[];      // video-1.mp4 through video-6.mp4
+  finalVideo?: string;
+}
+```
+
+New methods:
+| Method | Purpose |
+|--------|---------|
+| `createSessionDirectories(sessionId)` | Creates outputs/, frames/, videos/, final/ |
+| `getSessionOutputDir(sessionId)` | Returns output directory path |
+| `updatePipelineStage(sessionId, stage)` | Updates current pipeline stage |
+| `addInputImages(sessionId, paths)` | Records reference image paths |
+| `addAsset(sessionId, type, path)` | Records generated asset paths |
+| `getPipelineStatus(sessionId)` | Returns stage, assets, progress % |
+| `getSessionAssets(sessionId)` | Returns all generated assets |
+
+**Step 5.2: Update sdk-server.ts** ✅
+
+New endpoints:
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /sessions/:id/pipeline` | Get pipeline status and progress |
+| `GET /sessions/:id/assets` | Get all generated asset paths |
+
+Updated `/generate` endpoint:
+- Now accepts `inputImages` array in request body
+- Creates session directories before generation
+- Returns `outputDir` and `pipeline` status in response
+- Records pipeline errors on failure
 
 ---
 
@@ -281,58 +308,52 @@ npx tsx scripts/stitch-videos.ts --clips a.mp4 b.mp4 --output final.mp4
 ```
 
 **Step 6.2: Test skills in isolation**
-- Verify editorial-photography triggers on relevant prompts
+- Verify editorial-photography provides exact templates
 - Verify fashion-shoot-pipeline executes scripts correctly
+- Verify agent does NOT improvise prompts
 
 **Step 6.3: End-to-end test**
 - Provide reference images + prompt
-- Verify full pipeline execution
+- Verify full pipeline execution with exact Tim workflow
 - Check final video output quality
 
 ---
 
 ## File Changes Summary
 
-### New Files
+### Current Skill Structure
 ```
-agent/.claude/skills/editorial-photography/
-├── SKILL.md
-├── core/
-│   ├── camera-fundamentals.md
-│   └── prompt-assembly.md
-├── styles/
-│   └── fashion-tim.md
-└── templates/
-    ├── injection-blocks.md
-    └── style-fuji-velvia.md
-
-agent/.claude/skills/fashion-shoot-pipeline/
-├── SKILL.md
-└── scripts/
-    ├── generate-image.ts
-    ├── generate-video.ts
-    └── stitch-videos.ts
+agent/.claude/skills/
+├── editorial-photography/
+│   ├── SKILL.md                        # Strict template-based instructions
+│   └── workflows/
+│       └── tim-workflow-templates.md   # Exact prompts with {PLACEHOLDERS}
+│
+└── fashion-shoot-pipeline/
+    ├── SKILL.md                        # Script execution instructions
+    └── scripts/
+        ├── generate-image.ts           # FAL.ai image generation
+        ├── generate-video.ts           # FAL.ai video generation
+        └── stitch-videos.ts            # FFmpeg video stitching
 ```
 
-### Modified Files
+### Modified Files (Complete)
 ```
-server/lib/orchestrator-prompt.ts  # Update system prompt
-server/lib/ai-client.ts            # Ensure skill config
-server/lib/session-manager.ts      # Add directory management
-server/sdk-server.ts               # Update endpoint handling
-package.json                       # Add fluent-ffmpeg dependency
+server/lib/orchestrator-prompt.ts  # Update system prompt (Phase 4) ✅
+server/lib/session-manager.ts      # Add directory management (Phase 5) ✅
+server/sdk-server.ts               # Update endpoint handling (Phase 5) ✅
 ```
 
 ---
 
 ## Implementation Order
 
-1. **Phase 1** - Project setup, directories, dependencies
-2. **Phase 2** - Knowledge skill (editorial-photography)
-3. **Phase 3** - Action skill scripts (generate-image.ts first)
-4. **Phase 4** - Orchestrator prompt update
-5. **Phase 5** - Session management integration
-6. **Phase 6** - Testing
+1. **Phase 1** - Project setup, directories, dependencies ✅
+2. **Phase 2** - Knowledge skill (editorial-photography) - template-based ✅
+3. **Phase 3** - Action skill scripts ✅
+4. **Phase 4** - Orchestrator prompt update ✅
+5. **Phase 5** - Session management integration ✅
+6. **Phase 6** - Testing & Validation ⏳
 
 ---
 
@@ -343,12 +364,18 @@ package.json                       # Add fluent-ffmpeg dependency
 - [x] `generate-video.ts` generates videos via FAL.ai Kling 2.6
 - [x] `stitch-videos.ts` stitches videos with smooth easing transitions
 
-### Pipeline (Phases 4-6)
-- [ ] Agent analyzes reference images and describes contents
-- [ ] Agent generates detailed prompts from one-line input
-- [ ] Hero image generates successfully via FAL.ai
-- [ ] Contact sheet generates with 6 distinct angles
+### Skills (Phase 2) ✅
+- [x] editorial-photography provides exact prompt templates
+- [x] Templates have clear {PLACEHOLDERS} for reference details
+- [x] Camera angles and style blocks are FIXED (not adaptable)
+- [x] fashion-shoot-pipeline references templates correctly
+
+### Pipeline End-to-End (Phase 6 - Testing)
+- [ ] Agent analyzes reference images and extracts details
+- [ ] Agent fills templates with extracted details (no improvisation)
+- [ ] Hero image generates using exact HERO_PROMPT template
+- [ ] Contact sheet generates with exact 6 camera angles
 - [ ] All 6 frames isolate correctly
-- [ ] All 6 videos generate with camera movement
-- [ ] Final video stitches with smooth transitions
+- [ ] All 6 videos generate with predefined camera movements
+- [ ] Final video stitches with fade/smooth/1.2s transitions
 - [ ] Full pipeline completes in single agent session
