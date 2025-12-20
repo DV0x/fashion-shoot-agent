@@ -93,6 +93,7 @@ interface StitchOptions {
   transitionType?: TransitionType;
   easing?: EasingType;
   clipDuration?: number;
+  speed?: number; // Playback speed multiplier (1.5 = 50% faster)
 }
 
 // Get video duration using ffprobe
@@ -144,7 +145,8 @@ function buildFilterComplex(
   clipDurations: number[],
   transitionDuration: number,
   transitionType: TransitionType,
-  easing: EasingType
+  easing: EasingType,
+  speed?: number
 ): string {
   if (clipCount < 2) {
     throw new Error("Need at least 2 clips to stitch");
@@ -155,19 +157,40 @@ function buildFilterComplex(
   const escapedExpr = customExpr.replace(/'/g, "'\\''");
 
   const filters: string[] = [];
-  let lastOutput = "0:v";
-  let accumulatedDuration = clipDurations[0];
+
+  // Apply speed adjustment to each clip if specified
+  const speedInputs: string[] = [];
+  if (speed && speed !== 1) {
+    const ptsFactor = (1 / speed).toFixed(6);
+    for (let i = 0; i < clipCount; i++) {
+      filters.push(`[${i}:v]setpts=${ptsFactor}*PTS[s${i}]`);
+      speedInputs.push(`s${i}`);
+    }
+  } else {
+    for (let i = 0; i < clipCount; i++) {
+      speedInputs.push(`${i}:v`);
+    }
+  }
+
+  // Adjust durations for speed
+  const adjustedDurations = speed && speed !== 1
+    ? clipDurations.map(d => d / speed)
+    : clipDurations;
+
+  let lastOutput = `[${speedInputs[0]}]`;
+  let accumulatedDuration = adjustedDurations[0];
 
   for (let i = 1; i < clipCount; i++) {
     const offset = accumulatedDuration - transitionDuration;
     const outputLabel = i === clipCount - 1 ? "vout" : `v${i}`;
+    const currentInput = `[${speedInputs[i]}]`;
 
     filters.push(
-      `[${lastOutput}][${i}:v]xfade=transition=custom:duration=${transitionDuration}:offset=${offset.toFixed(3)}:expr='${escapedExpr}'[${outputLabel}]`
+      `${lastOutput}${currentInput}xfade=transition=custom:duration=${transitionDuration}:offset=${offset.toFixed(3)}:expr='${escapedExpr}'[${outputLabel}]`
     );
 
-    lastOutput = outputLabel;
-    accumulatedDuration += clipDurations[i] - transitionDuration;
+    lastOutput = `[${outputLabel}]`;
+    accumulatedDuration += adjustedDurations[i] - transitionDuration;
   }
 
   return filters.join(";");
@@ -182,6 +205,7 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     transitionType = "fade",
     easing = "cubic-out",
     clipDuration,
+    speed,
   } = options;
 
   if (clips.length < 2) {
@@ -194,6 +218,9 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
   console.error(`Transition: ${transitionType}`);
   console.error(`Easing: ${easing}`);
   console.error(`Transition duration: ${transitionDuration}s`);
+  if (speed && speed !== 1) {
+    console.error(`Speed: ${speed}x (${((speed - 1) * 100).toFixed(0)}% faster)`);
+  }
 
   // Get durations for all clips
   let clipDurations: number[];
@@ -220,7 +247,8 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     clipDurations,
     transitionDuration,
     transitionType,
-    easing
+    easing,
+    speed
   );
 
   console.error("Filter complex built");
@@ -269,6 +297,7 @@ function parseArguments() {
       easing: { type: "string", short: "e" },
       "transition-duration": { type: "string", short: "d" },
       "clip-duration": { type: "string" },
+      speed: { type: "string", short: "s" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: false,
@@ -292,6 +321,7 @@ Options:
   -e, --easing             Easing curve (default: cubic-out)
                            Options: ${easings}
   -d, --transition-duration  Transition duration in seconds (default: 0.5)
+  -s, --speed              Playback speed multiplier (1.5 = 50% faster)
       --clip-duration      Fixed clip duration (auto-detected if not specified)
   -h, --help               Show this help message
 
@@ -373,6 +403,12 @@ Examples:
     process.exit(1);
   }
 
+  const speed = values.speed ? parseFloat(values.speed) : undefined;
+  if (speed !== undefined && (isNaN(speed) || speed <= 0)) {
+    console.error("Error: --speed must be a positive number (e.g., 1.5 for 50% faster)");
+    process.exit(1);
+  }
+
   return {
     clips: values.clips,
     outputPath: values.output,
@@ -380,6 +416,7 @@ Examples:
     easing: easing as EasingType,
     transitionDuration,
     clipDuration,
+    speed,
   };
 }
 
@@ -395,6 +432,7 @@ async function main() {
       easing: args.easing,
       transitionDuration: args.transitionDuration,
       clipDuration: args.clipDuration,
+      speed: args.speed,
     });
 
     // Output result path to stdout (for pipeline integration)

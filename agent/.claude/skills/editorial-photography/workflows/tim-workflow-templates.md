@@ -239,24 +239,24 @@ npx tsx scripts/generate-image.ts \
 
 Each frame type has a specific camera movement. Use these exact prompts:
 
-**Frame 1 (Beauty Portrait) - Subtle Push In:**
+**Frame 1 (Beauty Portrait) - Push In:**
 ```
-Camera slowly pushes in toward the subject's face, maintaining eye contact. Subtle micro-movements in expression. The lighting remains consistent throughout.
+Camera pushes in toward the subject's face, maintaining eye contact. Micro-movements in expression. The lighting remains consistent throughout.
 ```
 
-**Frame 2 (High-Angle) - Gentle Orbital:**
+**Frame 2 (High-Angle) - Orbital:**
 ```
-Camera performs a subtle orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is slow and elegant.
+Camera performs an orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is smooth and elegant.
 ```
 
 **Frame 3 (Low-Angle Full-Body) - Rise Up:**
 ```
-Camera slowly rises from the low angle, emphasizing the subject's height and presence. The silhouette remains powerful throughout the movement.
+Camera rises from the low angle, emphasizing the subject's height and presence. The silhouette remains powerful throughout the movement.
 ```
 
 **Frame 4 (Side-On Profile) - Lateral Track:**
 ```
-Camera performs a slow lateral tracking movement along the subject's profile, maintaining the compressed telephoto look. Movement is minimal and refined.
+Camera performs a lateral tracking movement along the subject's profile, maintaining the compressed telephoto look. Movement is smooth and refined.
 ```
 
 **Frame 5 (Intimate Close) - Breath Movement:**
@@ -266,7 +266,7 @@ Extremely subtle movement suggesting the subject's natural breathing. Camera hol
 
 **Frame 6 (Extreme Detail) - Macro Drift:**
 ```
-Camera performs an extremely slow drift across the detail, revealing texture and craftsmanship. Movement is almost imperceptible, luxurious pacing.
+Camera performs a steady drift across the detail, revealing texture and craftsmanship. Movement is precise and refined.
 ```
 
 ### Script Execution (Run 6 Times)
@@ -275,14 +275,14 @@ Camera performs an extremely slow drift across the detail, revealing texture and
 # Video 1 from Frame 1
 npx tsx scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
-  --prompt "Camera slowly pushes in toward the subject's face, maintaining eye contact. Subtle micro-movements in expression. The lighting remains consistent throughout." \
+  --prompt "Camera pushes in toward the subject's face, maintaining eye contact. Micro-movements in expression. The lighting remains consistent throughout." \
   --output outputs/videos/video-1.mp4 \
   --duration 5
 
 # Video 2 from Frame 2
 npx tsx scripts/generate-video.ts \
   --input outputs/frames/frame-2.png \
-  --prompt "Camera performs a subtle orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is slow and elegant." \
+  --prompt "Camera performs an orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is smooth and elegant." \
   --output outputs/videos/video-2.mp4 \
   --duration 5
 
