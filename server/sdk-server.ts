@@ -322,13 +322,18 @@ app.post('/generate', async (req, res) => {
     // Build prompt with file paths so agent can pass them to generate-image.ts --input
     let fullPrompt = prompt;
     if (images.length > 0) {
+      // Build --input flags for ALL images
+      const inputFlags = images.map((img: string) => `--input "${img}"`).join(' ');
+
       fullPrompt = `${prompt}
 
-## Reference Image File Paths (use these with --input flag in generate-image.ts)
+## Reference Image File Paths (use ALL of these with --input flags in generate-image.ts)
 ${images.map((img: string, i: number) => `- Reference ${i + 1}: ${img}`).join('\n')}
 
-IMPORTANT: When generating the hero image, you MUST pass these reference images using the --input flag to preserve the subject's appearance. Example:
-npx tsx scripts/generate-image.ts --prompt "..." --input "${images[0]}" --output outputs/hero.png --aspect-ratio 3:2 --resolution 2K`;
+CRITICAL: You MUST pass ALL reference images using multiple --input flags to preserve subject appearance AND include all referenced items (watch, jacket, etc.).
+
+Example command with ALL ${images.length} reference images:
+npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/hero.png --aspect-ratio 3:2 --resolution 2K`;
     }
 
     for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, undefined, images)) {
