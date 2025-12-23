@@ -39,6 +39,10 @@ Transform reference images and prompts into editorial photography and video cont
 | Runtime | Node.js + TypeScript (ES2022) |
 | SDK | `@anthropic-ai/claude-agent-sdk` v0.1.73 |
 | Web Framework | Express.js 4.x |
+| Image Generation | FAL.ai (nano-banana-pro) |
+| Video Generation | FAL.ai (Kling 2.6 Pro) |
+| Video Stitching | FFmpeg 8.x + fluent-ffmpeg |
+| Image Processing | Sharp |
 | Schema Validation | Zod |
 | Build Tool | tsx (TypeScript Execute) |
 | Module System | ESNext (ES Modules) |
@@ -103,47 +107,48 @@ Transform reference images and prompts into editorial photography and video cont
 
 ```
 fashion-shoot-agent/
-├── server/                          # HTTP Server Layer
-│   ├── sdk-server.ts               # Express app entry point
-│   └── lib/                        # Core libraries
-│       ├── ai-client.ts            # Claude SDK wrapper
-│       ├── session-manager.ts      # Session persistence
-│       ├── instrumentor.ts         # Cost & metrics tracking
-│       └── orchestrator-prompt.ts  # System prompt definition
+├── server/                              # HTTP Server Layer
+│   ├── sdk-server.ts                   # Express app entry point (461 lines)
+│   └── lib/                            # Core libraries
+│       ├── ai-client.ts                # Claude SDK wrapper with multimodal support (209 lines)
+│       ├── session-manager.ts          # Session persistence & pipeline tracking (629 lines)
+│       ├── instrumentor.ts             # Cost & metrics tracking (150 lines)
+│       └── orchestrator-prompt.ts      # Tim workflow system prompt (219 lines)
 │
-├── agent/                           # Agent Configuration
-│   └── .claude/                    # SDK configuration directory
-│       ├── settings.json           # Project-level settings
-│       ├── skills/                 # Agent skills (knowledge + actions)
-│       └── agents/                 # Subagent definitions
+├── agent/                               # Agent Configuration
+│   ├── .claude/
+│   │   └── skills/                     # Agent skills
+│   │       ├── editorial-photography/  # Knowledge skill - prompt templates
+│   │       │   ├── SKILL.md
+│   │       │   └── workflows/
+│   │       │       └── tim-workflow-templates.md
+│   │       └── fashion-shoot-pipeline/ # Action skill - generation scripts
+│   │           ├── SKILL.md
+│   │           └── scripts/
+│   │               ├── generate-image.ts   # FAL.ai image generation (263 lines)
+│   │               ├── generate-video.ts   # FAL.ai Kling video gen (259 lines)
+│   │               ├── stitch-videos.ts    # FFmpeg stitching (446 lines)
+│   │               └── crop-frames.ts      # Contact sheet cropping (310 lines)
+│   └── outputs/                         # Generated assets
+│       ├── final/                      # Final stitched videos
+│       ├── frames/                     # Isolated frames
+│       └── videos/                     # Individual video clips
 │
-├── claude_sdk/                      # SDK Documentation (18 files)
-│   ├── overview.md                 # SDK capabilities
-│   ├── typescript_sdk.md           # Full API reference
-│   ├── session_management.md       # Sessions, resume, fork
-│   ├── mcp.md                      # Model Context Protocol
-│   ├── custom_tools.md             # Creating MCP tools
-│   ├── Agent_skills.md             # Skill system
-│   ├── permissions.md              # Permission modes
-│   ├── builtinsdktools.md          # Built-in tool reference
-│   ├── subagents.md                # Specialized agents
-│   └── ...                         # Additional docs
+├── sessions/                            # Persisted session data (auto-created)
+│   └── session_*.json                  # Individual session files
 │
-├── sessions/                        # Persisted session data (auto-created)
-│   └── session_*.json              # Individual session files
+├── docs/                                # Project documentation
+│   ├── ARCHITECTURE.md                 # This document
+│   ├── IMPLEMENTATION_PLAN.md          # Feature roadmap
+│   └── EASING_CURVES.md                # Video transition specs
 │
-├── docs/                            # Project documentation
-│   ├── ARCHITECTURE.md             # This document
-│   ├── IMPLEMENTATION_PLAN.md      # Feature roadmap
-│   └── EASING_CURVES.md            # Video transition specs
-│
-├── workflow-docs/                   # Pipeline specifications
+├── workflow-docs/                       # Pipeline specifications
 │   ├── workflow.md
-│   └── CONTACT_SHEET_*.md          # Contact sheet workflows
+│   └── CONTACT_SHEET_TIM_WORKFLOW_SPEC.md
 │
-├── package.json                     # Dependencies & scripts
-├── tsconfig.json                    # TypeScript configuration
-└── .env                             # Environment variables
+├── package.json                         # Dependencies & scripts
+├── tsconfig.json                        # TypeScript configuration
+└── .env                                 # Environment variables (FAL_KEY, ANTHROPIC_API_KEY)
 ```
 
 ---
@@ -213,10 +218,10 @@ class AIClient {
 
 ```typescript
 {
-  cwd: 'agent/',                      // Project directory with .claude/
-  model: 'claude-sonnet-4-20250514',  // Claude Sonnet 4
-  maxTurns: 20,                       // Conversation limit
-  settingSources: ['user', 'project'], // Load filesystem settings
+  cwd: projectRoot,                     // Points to agent/ directory
+  model: 'claude-sonnet-4-20250514',    // Claude Sonnet 4
+  maxTurns: 100,                        // Full pipeline needs 50-80 turns
+  settingSources: ['user', 'project'],  // Load .claude/ settings
   allowedTools: [
     'Read',    // File reading
     'Write',   // File writing
@@ -225,7 +230,19 @@ class AIClient {
     'Task',    // Subagent delegation
     'Skill'    // Skill invocation
   ],
-  systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT
+  systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT  // Tim workflow orchestration
+}
+```
+
+**Multimodal Support:**
+
+The AIClient supports passing reference images to Claude for analysis:
+
+```typescript
+// Images are converted to base64 content blocks
+async *queryWithSession(prompt: string, sessionId?: string, metadata?: any, imagePaths?: string[]) {
+  // Loads images, detects media type (PNG, JPEG, GIF, WEBP)
+  // Passes as content blocks to Claude API
 }
 ```
 
@@ -378,35 +395,47 @@ processMessage(message: any): void {
 
 ### 5. System Prompt (`orchestrator-prompt.ts`)
 
-Defines the agent's persona and workflow instructions.
+Defines the Tim workflow pipeline executor with strict rules against improvisation.
 
-**Current Prompt:**
+**Key Principles:**
 
-```typescript
-export const ORCHESTRATOR_SYSTEM_PROMPT = `You are a Fashion Shoot Agent.
+1. **NO IMPROVISATION** - Use EXACT prompt templates from editorial-photography skill
+2. **NO CREATIVE INTERPRETATION** - Fill {PLACEHOLDERS} only, do not modify template structure
+3. **FIXED CAMERA ANGLES** - The 6-shot pattern is locked, never change it
+4. **FIXED STYLE** - Fuji Velvia treatment is locked, never change it
 
-Your job is to help users create AI-powered fashion photoshoots.
+**Pipeline Stages Defined:**
 
-## Available Tools
-- Read/Write files
-- Generate images via MCP (when configured)
-
-## Workflow
-1. Receive user request (photo + costumes + style)
-2. Plan the photoshoot (camera angles, poses)
-3. Generate contact sheet (2x3 grid of keyframes)
-4. Generate videos from keyframes
-5. Stitch videos with easing transitions
-6. Return results
-
-## For Now
-Just acknowledge requests and describe what you would do.
-When MCPs are configured, you'll be able to:
-- Generate images via nano-banana MCP
-- Generate videos via kling-video MCP
-- Stitch videos via ffmpeg utility
-`;
 ```
+Stage 1: ANALYZE     → Look at reference images, extract details
+Stage 2: HERO        → Generate full-body hero shot (2K, 3:2)
+Stage 3: CONTACT     → Generate 2×3 grid with 6 angles (2K, 3:2)
+Stage 4: ISOLATE     → Extract each frame × 6 (1K, 3:2)
+Stage 5: VIDEO       → Generate video from each frame × 6 (5s each)
+Stage 6: STITCH      → Combine videos with transitions
+```
+
+**The 6 Camera Angles (Fixed):**
+
+```
+┌─────────────────┬─────────────────┬─────────────────┐
+│  Frame 1 (R1C1) │  Frame 2 (R1C2) │  Frame 3 (R1C3) │
+│  Beauty Portrait│  High-Angle 3/4 │  Low-Angle Full │
+├─────────────────┼─────────────────┼─────────────────┤
+│  Frame 4 (R2C1) │  Frame 5 (R2C2) │  Frame 6 (R2C3) │
+│  Side-On Profile│  Intimate Close │  Extreme Detail │
+└─────────────────┴─────────────────┴─────────────────┘
+```
+
+**Style Treatment (Fixed - Never Change):**
+
+- Film: Fuji Velvia
+- Exposure: Overexposed
+- Grain: Significant film grain
+- Saturation: Oversaturated
+- Skin: Shiny/oily appearance
+- Aspect: 3:2
+- Light: Hard flash, concentrated on subject, fading to edges
 
 ---
 
@@ -475,17 +504,44 @@ aiClient.addMcpServer('image-gen', server);
 
 #### 5. Skill System
 
-Skills are loaded from `.claude/skills/` directories:
+The agent uses two complementary skills loaded from `.claude/skills/`:
 
 ```
 agent/.claude/skills/
-├── editorial-photography/     # Knowledge skill
-│   ├── SKILL.md              # Skill definition
-│   └── core/                 # Knowledge files
-└── fashion-pipeline/          # Action skill
+├── editorial-photography/           # Knowledge skill - provides templates
+│   ├── SKILL.md                    # Skill definition
+│   └── workflows/
+│       └── tim-workflow-templates.md  # All prompt templates
+└── fashion-shoot-pipeline/          # Action skill - executes generation
     ├── SKILL.md
-    └── scripts/              # Executable scripts
+    └── scripts/
+        ├── generate-image.ts        # FAL.ai image generation
+        ├── generate-video.ts        # FAL.ai Kling video generation
+        ├── stitch-videos.ts         # FFmpeg video stitching
+        └── crop-frames.ts           # Contact sheet frame extraction
 ```
+
+**Skill 1: editorial-photography (Knowledge)**
+
+Provides exact prompt templates for the Tim workflow:
+
+| Template | Purpose | Placeholders |
+|----------|---------|--------------|
+| `HERO_PROMPT` | Full-body hero shot | `{SUBJECT}`, `{WARDROBE}`, `{ACCESSORIES}`, `{POSE}`, `{BACKGROUND}` |
+| `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` (optional override) |
+| `FRAME_ISOLATION_PROMPT` | Extract single frame | `{ROW}`, `{COLUMN}` |
+| `VIDEO_PROMPTS` | Camera movements | Pre-defined per frame type |
+
+**Skill 2: fashion-shoot-pipeline (Action)**
+
+Executes the generation pipeline:
+
+| Script | Purpose | API |
+|--------|---------|-----|
+| `generate-image.ts` | Image generation | FAL.ai nano-banana-pro |
+| `generate-video.ts` | Video generation | FAL.ai Kling 2.6 Pro |
+| `stitch-videos.ts` | Video stitching | FFmpeg xfade with easing |
+| `crop-frames.ts` | Frame extraction | Sharp image processing |
 
 ---
 
@@ -725,13 +781,14 @@ Get session statistics.
 
 #### `POST /generate`
 
-Main generation endpoint.
+Main generation endpoint with multimodal support.
 
 **Request:**
 ```json
 {
-  "prompt": "Create a fashion photoshoot with a model in a red dress",
-  "sessionId": "optional-session-id"
+  "prompt": "Create a fashion photoshoot with confident energy",
+  "sessionId": "optional-session-id",
+  "inputImages": ["/path/to/reference-image.jpg"]
 }
 ```
 
@@ -739,22 +796,73 @@ Main generation endpoint.
 ```json
 {
   "success": true,
-  "sessionId": "session-1705312800000",
+  "sessionId": "session_abc123",
+  "outputDir": "/sessions/session_abc123/outputs",
   "response": "Final assistant response text",
   "fullResponse": "All responses joined with ---",
   "sessionStats": {
-    "id": "session-1705312800000",
-    "turnCount": 3,
-    "messageCount": 8
+    "id": "session_abc123",
+    "duration": 120000,
+    "turnCount": 45,
+    "messageCount": 120,
+    "status": "completed"
+  },
+  "pipeline": {
+    "stage": "completed",
+    "assets": {
+      "hero": "outputs/hero.png",
+      "contactSheet": "outputs/contact-sheet.png",
+      "frames": ["outputs/frames/frame-1.png", "..."],
+      "videos": ["outputs/videos/video-1.mp4", "..."],
+      "finalVideo": "outputs/final/fashion-video.mp4"
+    },
+    "progress": 100
   },
   "instrumentation": {
-    "campaignId": "session-1705312800000",
-    "totalCost_usd": 0.0234,
-    "costBreakdown": {
-      "total": 0.0234,
-      "tools": 2
+    "campaignId": "session_abc123",
+    "totalCost_usd": 1.23,
+    "totalDuration_ms": 120000
+  }
+}
+```
+
+#### `GET /sessions/:id/pipeline`
+
+Get pipeline status and assets.
+
+**Response:**
+```json
+{
+  "success": true,
+  "pipeline": {
+    "stage": "generating-videos",
+    "progress": 75,
+    "assets": {
+      "hero": "outputs/hero.png",
+      "contactSheet": "outputs/contact-sheet.png",
+      "frames": ["outputs/frames/frame-1.png", "..."]
     }
   }
+}
+```
+
+#### `GET /sessions/:id/assets`
+
+Get all generated assets for a session.
+
+#### `GET /sessions/:id/stream`
+
+SSE endpoint for real-time progress updates.
+
+**SSE Events:**
+```javascript
+{
+  type: 'connected',     // Initial connection
+  type: 'heartbeat',     // Keep-alive (30s interval)
+  type: 'system',        // SDK system message
+  type: 'assistant',     // Claude response
+  type: 'user',          // Tool results
+  type: 'result'         // Final result (success/error)
 }
 ```
 
@@ -951,52 +1059,117 @@ const options = {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| HTTP Server | ✅ Complete | All endpoints functional |
-| AIClient | ✅ Complete | SDK integration working |
-| SessionManager | ✅ Complete | Persistence and forking |
-| Instrumentor | ✅ Complete | Cost tracking working |
-| System Prompt | ⚠️ Placeholder | Describes workflow only |
-| Image Generation | ❌ Not Started | MCP server needed |
-| Video Generation | ❌ Not Started | MCP server needed |
-| Video Stitching | ❌ Not Started | FFmpeg integration needed |
-| Skills | ❌ Not Started | Directory structure planned |
+| HTTP Server | ✅ Complete | All endpoints functional, SSE streaming |
+| AIClient | ✅ Complete | SDK integration with multimodal support |
+| SessionManager | ✅ Complete | Persistence, forking, pipeline tracking |
+| Instrumentor | ✅ Complete | Cost tracking from SDK |
+| System Prompt | ✅ Complete | Tim workflow orchestrator (219 lines) |
+| editorial-photography Skill | ✅ Complete | Knowledge skill with prompt templates |
+| fashion-shoot-pipeline Skill | ✅ Complete | Action skill with 4 scripts |
+| Image Generation | ✅ Complete | FAL.ai nano-banana-pro integration |
+| Video Generation | ✅ Complete | FAL.ai Kling 2.6 Pro integration |
+| Video Stitching | ✅ Complete | FFmpeg xfade with easing curves |
+| Frame Cropping | ✅ Complete | Sharp-based contact sheet extraction |
+| Pipeline Tracking | ✅ Complete | Stage-by-stage progress with assets |
 
-### Planned Implementation (from `IMPLEMENTATION_PLAN.md`)
+### Completed Implementation Phases
 
-**Phase 1:** Project Setup
-- Skill directory structure
-- Dependency configuration
+**Phase 1:** Project Setup ✅
+- Skill directory structure created
+- Dependencies configured (FAL.ai, FFmpeg, Sharp)
 
-**Phase 2:** Knowledge Skill (`editorial-photography`)
-- Camera fundamentals
-- Prompt assembly patterns
-- Style templates
+**Phase 2:** Knowledge Skill (`editorial-photography`) ✅
+- Tim workflow templates
+- 6 fixed camera angles
+- Fuji Velvia style treatment
+- Prompt templates with placeholders
 
-**Phase 3:** Action Skill (`fashion-pipeline`)
-- Image generation (FAL.ai)
-- Video generation (Kling 2.6)
-- Video stitching (FFmpeg)
+**Phase 3:** Action Skill (`fashion-shoot-pipeline`) ✅
+- `generate-image.ts` - FAL.ai image generation (263 lines)
+- `generate-video.ts` - FAL.ai Kling 2.6 video (259 lines)
+- `stitch-videos.ts` - FFmpeg with easing (446 lines)
+- `crop-frames.ts` - Contact sheet cropping (310 lines)
 
-**Phase 4:** Orchestrator Enhancement
-- Updated system prompt
-- Pipeline coordination
+**Phase 4:** Orchestrator Enhancement ✅
+- Full Tim workflow system prompt
+- Pipeline stage definitions
+- Error handling guidelines
 
-**Phase 5:** Session Integration
-- Asset tracking
-- Multi-stage workflow state
+**Phase 5:** Session Integration ✅
+- Pipeline state tracking (9 stages)
+- Asset tracking per stage
+- Progress percentage reporting
+- SSE real-time updates
 
-**Phase 6:** Testing & Validation
+### Pipeline Execution Summary
+
+| Stage | Script | Resolution | Output | Expected Turns |
+|-------|--------|------------|--------|----------------|
+| Hero | generate-image.ts | 2K | hero.png | 2-3 |
+| Contact | generate-image.ts | 2K | contact-sheet.png | 2-3 |
+| Isolate | generate-image.ts × 6 | 1K | frames/frame-{1-6}.png | 12-18 |
+| Video | generate-video.ts × 6 | - | videos/video-{1-6}.mp4 | 12-18 |
+| Stitch | stitch-videos.ts | - | final/fashion-video.mp4 | 2-3 |
+| **Total** | | | | **50-80 turns** |
+
+### Output Files Generated
+
+```
+outputs/
+├── hero.png                    # Full-body hero shot (2K, 3:2)
+├── contact-sheet.png           # 2×3 grid with 6 angles (2K, 3:2)
+├── frames/
+│   ├── frame-1.png            # Beauty Portrait (1K)
+│   ├── frame-2.png            # High-Angle 3/4
+│   ├── frame-3.png            # Low-Angle Full
+│   ├── frame-4.png            # Side-On Profile
+│   ├── frame-5.png            # Intimate Close
+│   └── frame-6.png            # Extreme Detail
+├── videos/
+│   ├── video-1.mp4            # 5s each with camera movement
+│   ├── video-2.mp4
+│   ├── video-3.mp4
+│   ├── video-4.mp4
+│   ├── video-5.mp4
+│   └── video-6.mp4
+└── final/
+    └── fashion-video.mp4       # ~24s final video with transitions
+```
 
 ---
 
 ## Summary
 
-The Fashion Shoot Agent demonstrates a production-ready architecture for building AI agents on the Claude Agent SDK:
+The Fashion Shoot Agent is a **fully implemented** AI-powered fashion photoshoot generation system built on the Claude Agent SDK:
 
-- **Robust session management** with persistence and forking
+### Core Capabilities
+
+- **Multi-stage pipeline** - 6 stages from reference analysis to final video
+- **Deterministic execution** - Fixed camera angles, style treatment, no improvisation
+- **Multimodal input** - Reference images passed to Claude for analysis
+- **Real-time streaming** - SSE support for progress updates
+- **Session persistence** - Full conversation history with pipeline state
+
+### Architecture Highlights
+
+- **Robust session management** with persistence, forking, and pipeline tracking
 - **Complete instrumentation** for monitoring and cost tracking
-- **Extensible architecture** via MCP servers and Skills
+- **Skill-based architecture** - Knowledge skill (templates) + Action skill (scripts)
 - **Clean separation** between HTTP layer and SDK integration
-- **RESTful API** for easy integration with clients
+- **RESTful API** with SSE streaming for client integration
 
-The infrastructure is complete and ready for implementing the fashion photoshoot pipeline through MCP server integrations and skill definitions.
+### Generation Pipeline
+
+```
+Reference Images → Hero Shot → Contact Sheet → 6 Frames → 6 Videos → Stitched Video
+                   (2K)         (2K, 6 angles)  (1K each)  (5s each)  (~24s final)
+```
+
+### Technology Integration
+
+- **Claude Agent SDK** - Orchestration and tool execution
+- **FAL.ai** - Image generation (nano-banana-pro) and video generation (Kling 2.6 Pro)
+- **FFmpeg** - Video stitching with xfade transitions and easing curves
+- **Sharp** - Contact sheet frame extraction
+
+The system is production-ready for generating editorial fashion photography and video content from reference images.
