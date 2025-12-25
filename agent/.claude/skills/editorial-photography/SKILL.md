@@ -28,7 +28,7 @@ Invoke this skill when:
 Stage 1: ANALYZE     → Extract details from user's reference images
 Stage 2: HERO        → Generate full-body hero shot
 Stage 3: CONTACT     → Generate 2×3 grid (6 camera angles)
-Stage 4: ISOLATE     → Extract each frame (6 times)
+Stage 4: CROP        → Crop contact sheet into 6 frames
 Stage 5: VIDEO       → Generate video from each frame (6 times)
 Stage 6: STITCH      → Combine videos with transitions
 ```
@@ -58,8 +58,9 @@ Stage 6: STITCH      → Combine videos with transitions
 |----------|---------|--------------|
 | `HERO_PROMPT` | Full-body hero shot | `{SUBJECT}`, `{WARDROBE}`, `{ACCESSORIES}`, `{POSE}`, `{BACKGROUND}` |
 | `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` (optional override) |
-| `FRAME_ISOLATION_PROMPT` | Extract single frame | `{ROW}`, `{COLUMN}` |
 | `VIDEO_PROMPTS` | Camera movements | Pre-defined per frame type |
+
+**Note:** Frame extraction is done programmatically via `crop-frames.ts` (no prompt needed).
 
 ## Style Treatment (FIXED)
 

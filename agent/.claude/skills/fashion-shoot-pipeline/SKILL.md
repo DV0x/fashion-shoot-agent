@@ -36,6 +36,31 @@ npx tsx scripts/generate-image.ts \
 - `--aspect-ratio`: 3:2 (default), 16:9, 1:1, etc.
 - `--resolution`: 1K, 2K, 4K
 
+### crop-frames.ts
+
+Crop contact sheet grid into individual frames using Sharp.
+
+```bash
+npx tsx scripts/crop-frames.ts \
+  --input outputs/contact-sheet.png \
+  --output-dir outputs/frames/ \
+  --rows 2 \
+  --cols 3
+```
+
+**Options:**
+- `--input` (required): Input contact sheet image path
+- `--output-dir` (required): Output directory for cropped frames
+- `--rows`: Number of rows in the grid (default: 2)
+- `--cols`: Number of columns in the grid (default: 3)
+- `--gutter`: Pixels between grid cells, sets both X and Y
+- `--gutter-x`: Horizontal pixels between columns (default: 26)
+- `--gutter-y`: Vertical pixels between rows (default: 24)
+- `--format`: Output format: png, jpeg, webp (default: png)
+- `--prefix`: Output filename prefix (default: "frame")
+
+**Output:** Creates frame-1.png through frame-6.png (for 2×3 grid)
+
 ### generate-video.ts
 
 Generate videos via FAL.ai Kling 2.6 Pro.
@@ -77,7 +102,7 @@ npx tsx scripts/stitch-videos.ts \
 ```
 1. generate-image.ts (HERO)      → outputs/hero.png
 2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png
-3. generate-image.ts × 6 (ISOLATE) → outputs/frames/frame-{1-6}.png
+3. crop-frames.ts                → outputs/frames/frame-{1-6}.png
 4. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
 5. stitch-videos.ts              → outputs/final/fashion-video.mp4
 ```

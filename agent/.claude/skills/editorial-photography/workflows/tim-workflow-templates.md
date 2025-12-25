@@ -167,68 +167,40 @@ npx tsx scripts/generate-image.ts \
 
 ---
 
-## PHASE 4: FRAME ISOLATION
+## PHASE 4: FRAME CROPPING
 
-### FRAME_ISOLATION_PROMPT Template
+Use `crop-frames.ts` to programmatically extract all 6 frames from the contact sheet grid.
 
-Use this exact template for each of the 6 frames:
-
-```
-Isolate and amplify the key frame in row {ROW} column {COLUMN}. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-### All 6 Frame Isolation Prompts (Copy-Paste Ready)
-
-**Frame 1 (R1C1 - Beauty Portrait):**
-```
-Isolate and amplify the key frame in row 1 column 1. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-**Frame 2 (R1C2 - High-Angle Three-Quarter):**
-```
-Isolate and amplify the key frame in row 1 column 2. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-**Frame 3 (R1C3 - Low-Angle Full-Body):**
-```
-Isolate and amplify the key frame in row 1 column 3. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-**Frame 4 (R2C1 - Side-On Profile):**
-```
-Isolate and amplify the key frame in row 2 column 1. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-**Frame 5 (R2C2 - Intimate Close):**
-```
-Isolate and amplify the key frame in row 2 column 2. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-**Frame 6 (R2C3 - Extreme Detail):**
-```
-Isolate and amplify the key frame in row 2 column 3. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model.
-```
-
-### Script Execution (Run 6 Times)
+### Script Execution (Single Command)
 
 ```bash
-# Frame 1
-npx tsx scripts/generate-image.ts \
-  --prompt "Isolate and amplify the key frame in row 1 column 1. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model." \
+npx tsx scripts/crop-frames.ts \
   --input outputs/contact-sheet.png \
-  --output outputs/frames/frame-1.png \
-  --aspect-ratio 3:2 \
-  --resolution 1K
+  --output-dir outputs/frames/ \
+  --rows 2 \
+  --cols 3
+```
 
-# Frame 2
-npx tsx scripts/generate-image.ts \
-  --prompt "Isolate and amplify the key frame in row 1 column 2. Keep all details of the image in this keyframe exactly the same, do not change the pose or any details of the model." \
+This will automatically create:
+- `outputs/frames/frame-1.png` (R1C1 - Beauty Portrait)
+- `outputs/frames/frame-2.png` (R1C2 - High-Angle Three-Quarter)
+- `outputs/frames/frame-3.png` (R1C3 - Low-Angle Full-Body)
+- `outputs/frames/frame-4.png` (R2C1 - Side-On Profile)
+- `outputs/frames/frame-5.png` (R2C2 - Intimate Close)
+- `outputs/frames/frame-6.png` (R2C3 - Extreme Detail)
+
+### Optional: Adjust Gutter Settings
+
+If frames have visible borders or overlap, adjust the gutter values:
+
+```bash
+npx tsx scripts/crop-frames.ts \
   --input outputs/contact-sheet.png \
-  --output outputs/frames/frame-2.png \
-  --aspect-ratio 3:2 \
-  --resolution 1K
-
-# ... repeat for frames 3-6
+  --output-dir outputs/frames/ \
+  --rows 2 \
+  --cols 3 \
+  --gutter-x 26 \
+  --gutter-y 24
 ```
 
 ---
@@ -317,7 +289,7 @@ npx tsx scripts/stitch-videos.ts \
 1. ANALYZE references → Extract SUBJECT, WARDROBE, ACCESSORIES, POSE, BACKGROUND
 2. HERO → generate-image.ts with filled HERO_PROMPT (2K, 3:2)
 3. CONTACT → generate-image.ts with CONTACT_SHEET_PROMPT (2K, 3:2)
-4. ISOLATE → generate-image.ts × 6 with FRAME_ISOLATION_PROMPTs (1K, 3:2)
+4. CROP → crop-frames.ts to extract 6 frames from contact sheet
 5. VIDEO → generate-video.ts × 6 with VIDEO_PROMPTs (5s each)
 6. STITCH → stitch-videos.ts with fade/smooth/1.2s
 ```
