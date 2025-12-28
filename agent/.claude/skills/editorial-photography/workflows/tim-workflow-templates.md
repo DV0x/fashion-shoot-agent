@@ -1,32 +1,22 @@
 # Tim Workflow - Exact Prompt Templates
 
-This file contains **exact prompts** for the Tim workflow. Fill in `{PLACEHOLDERS}` with details extracted from reference image analysis. Do not modify any other part of the prompts.
+This file contains **exact prompts** for the Tim workflow. Fill in `{PLACEHOLDERS}` with details from reference images and selected presets. Do not modify any other part of the prompts.
+
+**Presets:** See `presets/poses.md` and `presets/backgrounds.md` for available options.
 
 ---
 
-## PHASE 1: REFERENCE ANALYSIS
+## PHASE 1: PRESET SELECTION & REFERENCE ANALYSIS
 
-Before generating any images, analyze the user's reference images and extract these details:
+### Step 1: Select Presets
 
-### Required Extractions
+User selects (or defaults are applied):
+- **POSE preset** → See `presets/poses.md` (Default: Confident Standing)
+- **BACKGROUND preset** → See `presets/backgrounds.md` (Default: Studio Grey)
 
-```
-SUBJECT:      [Age, gender, ethnicity, hair color/style, facial features]
-WARDROBE:     [Main garment(s), fit, material, color]
-ACCESSORIES:  [Glasses, jewelry, shoes, bags, hats - be specific]
-POSE:         [Body position, hand placement, expression, gaze direction]
-BACKGROUND:   [Color, environment type]
-```
+### Step 2: Analyze Reference Images
 
-### Example Analysis Output
-
-```
-SUBJECT:      "young Asian female model with shoulder-length black hair"
-WARDROBE:     "oversized vintage denim jacket, white crop top underneath, high-waisted black leather pants"
-ACCESSORIES:  "gold hoop earrings, layered gold necklaces, black platform boots, no glasses"
-POSE:         "confident stance with weight on left leg, right hand on hip, direct gaze at camera, slight smirk"
-BACKGROUND:   "grey seamless studio backdrop"
-```
+The subject, wardrobe, and accessories are extracted visually from the user's reference images. No manual description needed - the AI will reference the uploaded images directly.
 
 ---
 
@@ -34,20 +24,48 @@ BACKGROUND:   "grey seamless studio backdrop"
 
 ### HERO_PROMPT Template
 
-Fill in the placeholders, then use this exact prompt:
+Use this exact structure. Replace `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}` with the selected preset snippets from the presets files:
 
 ```
-Show me a high fashion photoshoot image of {SUBJECT} wearing {WARDROBE}. {ACCESSORIES_DETAIL}. The image should show a full body shot of the subject. {POSE_DESCRIPTION}. The setting is a studio environment with a {BACKGROUND_COLOR} background.
+Show me a high fashion photoshoot image of the subject from the reference photo wearing the outfit and accessories from the reference images.
+
+The image should show a full body shot of the subject.
+
+Pose: {POSE_PRESET_SNIPPET}
+
+Setting: {BACKGROUND_PRESET_SNIPPET}
 
 The image is shot on fuji velvia film on a 55mm prime lens with a hard flash, the light is concentrated on the subject and fades slightly toward the edges of the frame. The image is over exposed showing significant film grain and is oversaturated. The skin appears shiny (almost oily).
 
 3:2 aspect ratio
 ```
 
-### Example Filled Hero Prompt
+### Example: Confident Standing + Outdoor Urban
 
 ```
-Show me a high fashion photoshoot image of a young Asian female model with shoulder-length black hair wearing an oversized vintage denim jacket with a white crop top underneath and high-waisted black leather pants. She has gold hoop earrings and layered gold necklaces, wearing black platform boots. The image should show a full body shot of the subject. She stands with confident stance, weight on left leg, right hand on hip, direct gaze at camera with a slight smirk. The setting is a studio environment with a grey background.
+Show me a high fashion photoshoot image of the subject from the reference photo wearing the outfit and accessories from the reference images.
+
+The image should show a full body shot of the subject.
+
+Pose: standing with weight shifted to one leg, hand resting on hip, shoulders back with chin slightly lifted, direct confident gaze at camera, editorial attitude
+
+Setting: city street environment, urban architectural context, real-world metropolitan setting with street elements
+
+The image is shot on fuji velvia film on a 55mm prime lens with a hard flash, the light is concentrated on the subject and fades slightly toward the edges of the frame. The image is over exposed showing significant film grain and is oversaturated. The skin appears shiny (almost oily).
+
+3:2 aspect ratio
+```
+
+### Example: Editorial Drama + Studio Black
+
+```
+Show me a high fashion photoshoot image of the subject from the reference photo wearing the outfit and accessories from the reference images.
+
+The image should show a full body shot of the subject.
+
+Pose: angular high-fashion pose, strong geometric body shapes, dramatic tension in posture, intense editorial presence, fashion-forward attitude
+
+Setting: dark void background, dramatic and moody, low-key studio with subject isolation
 
 The image is shot on fuji velvia film on a 55mm prime lens with a hard flash, the light is concentrated on the subject and fades slightly toward the edges of the frame. The image is over exposed showing significant film grain and is oversaturated. The skin appears shiny (almost oily).
 

@@ -18,6 +18,7 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 | Phase 4 | Orchestrator System Prompt Update | ✅ Complete | - |
 | Phase 5 | Session Management Integration | ✅ Complete | - |
 | Phase 6 | Testing & Validation | ✅ Complete | - |
+| Phase 7 | Presets Configuration (Pose & Background) | ✅ Complete | - |
 
 ### Phase 3 Progress
 | Script | Status | Tested |
@@ -27,7 +28,7 @@ Build an AI-powered fashion photoshoot generation agent using the Claude Agent S
 | `stitch-videos.ts` | ✅ Complete | ✅ Yes |
 | `crop-frames.ts` | ✅ Complete | ✅ Yes |
 
-**Last Updated:** 2025-12-20
+**Last Updated:** 2025-12-28
 
 ---
 
@@ -362,15 +363,84 @@ npx tsx scripts/stitch-videos.ts --clips a.mp4 b.mp4 --output final.mp4 --speed 
 
 ---
 
+### Phase 7: Presets Configuration ✅
+
+**Status:** Complete (2025-12-28)
+
+**Goal:** Give users creative control over pose and background while keeping core style elements locked.
+
+**Step 7.1: Create presets directory structure** ✅
+```
+agent/.claude/skills/editorial-photography/presets/
+├── poses.md        # 7 pose presets + custom option
+└── backgrounds.md  # 7 background presets + custom option
+```
+
+**Step 7.2: Define POSE Presets (7)** ✅
+
+| # | Preset | Prompt Snippet |
+|---|--------|----------------|
+| 1 | Confident Standing | standing with weight shifted to one leg, hand resting on hip... (DEFAULT) |
+| 2 | Seated Editorial | sitting elegantly on floor or low surface... |
+| 3 | Leaning Casual | leaning against wall or surface, relaxed shoulders... |
+| 4 | Editorial Drama | angular high-fashion pose, strong geometric body shapes... |
+| 5 | Relaxed Natural | soft candid posture, natural unstaged stance... |
+| 6 | Street Walk | mid-stride walking motion, confident urban walk... |
+| 7 | Urban Lean | leaning against urban surface like wall or railing... |
+
+**Step 7.3: Define BACKGROUND Presets (7)** ✅
+
+| # | Preset | Prompt Snippet |
+|---|--------|----------------|
+| 1 | Studio Grey | seamless grey studio backdrop, clean and timeless... (DEFAULT) |
+| 2 | Studio White | white cyclorama background, bright and commercial... |
+| 3 | Studio Black | dark void background, dramatic and moody... |
+| 4 | Industrial | raw concrete walls with urban texture... |
+| 5 | Warm Daylight | soft natural window light environment... |
+| 6 | Color Gel | bold solid colored backdrop with editorial gel lighting... |
+| 7 | Outdoor Urban | city street environment, urban architectural context... |
+
+**Step 7.4: Update HERO_PROMPT Template** ✅
+
+Old placeholders:
+```
+{SUBJECT}, {WARDROBE}, {ACCESSORIES}, {POSE}, {BACKGROUND}
+```
+
+New placeholders:
+```
+{POSE_PRESET_SNIPPET}, {BACKGROUND_PRESET_SNIPPET}
+```
+
+Subject, wardrobe, and accessories are now extracted visually from reference images (no manual description needed).
+
+**Step 7.5: Update SKILL.md** ✅
+- Added preset tables for quick reference
+- Updated workflow stages to include preset selection
+- Added instructions to read from `presets/` directory
+
+**What Stays Fixed (V1):**
+- 6 camera angles (beauty, high-angle, low-angle, side-on, intimate, detail)
+- Fuji Velvia film stock
+- Hard flash lighting
+- 55mm prime lens
+- Overexposed with grain
+- 3:2 aspect ratio
+
+---
+
 ## File Changes Summary
 
 ### Current Skill Structure
 ```
 agent/.claude/skills/
 ├── editorial-photography/
-│   ├── SKILL.md                        # Strict template-based instructions
+│   ├── SKILL.md                        # Skill definition with preset tables
+│   ├── presets/                        # NEW: Customizable presets
+│   │   ├── poses.md                    # 7 pose presets + custom
+│   │   └── backgrounds.md              # 7 background presets + custom
 │   └── workflows/
-│       └── tim-workflow-templates.md   # Exact prompts with {PLACEHOLDERS}
+│       └── tim-workflow-templates.md   # Prompts with {PRESET_SNIPPET} placeholders
 │
 └── fashion-shoot-pipeline/
     ├── SKILL.md                        # Script execution instructions
@@ -398,6 +468,7 @@ server/sdk-server.ts               # Update endpoint handling (Phase 5) ✅
 4. **Phase 4** - Orchestrator prompt update ✅
 5. **Phase 5** - Session management integration ✅
 6. **Phase 6** - Testing & Validation ✅
+7. **Phase 7** - Presets configuration (pose & background) ✅
 
 ---
 
@@ -423,3 +494,10 @@ server/sdk-server.ts               # Update endpoint handling (Phase 5) ✅
 - [x] All 6 videos generate with camera movements
 - [x] Final video stitches with fade/smooth/1.2s/1.5x speed
 - [x] Full pipeline tested and working
+
+### Presets (Phase 7) ✅
+- [x] 7 pose presets defined in `presets/poses.md`
+- [x] 7 background presets defined in `presets/backgrounds.md`
+- [x] HERO_PROMPT updated to use `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}`
+- [x] SKILL.md updated with preset tables and instructions
+- [x] Defaults set: Confident Standing + Studio Grey

@@ -13,6 +13,57 @@ app.use(express.json());
 const sseConnections = new Map<string, express.Response[]>();
 
 /**
+ * Checkpoint data structure parsed from agent response
+ */
+interface CheckpointData {
+  stage: 'hero' | 'frames';
+  status: string;
+  artifact?: string;
+  artifacts?: string[];
+  message: string;
+}
+
+/**
+ * Parse checkpoint marker from agent response
+ * Returns null if no checkpoint found
+ */
+function parseCheckpoint(responseText: string): CheckpointData | null {
+  const checkpointRegex = /---CHECKPOINT---([\s\S]*?)---END CHECKPOINT---/;
+  const match = responseText.match(checkpointRegex);
+
+  if (!match) {
+    return null;
+  }
+
+  const checkpointContent = match[1].trim();
+  const lines = checkpointContent.split('\n');
+  const data: Record<string, string> = {};
+
+  for (const line of lines) {
+    const colonIndex = line.indexOf(':');
+    if (colonIndex > -1) {
+      const key = line.substring(0, colonIndex).trim();
+      const value = line.substring(colonIndex + 1).trim();
+      data[key] = value;
+    }
+  }
+
+  // Parse artifacts list if present
+  let artifacts: string[] | undefined;
+  if (data.artifacts) {
+    artifacts = data.artifacts.split(',').map(s => s.trim());
+  }
+
+  return {
+    stage: data.stage as 'hero' | 'frames',
+    status: data.status || 'complete',
+    artifact: data.artifact,
+    artifacts,
+    message: data.message || ''
+  };
+}
+
+/**
  * Enhanced logging for SDK messages - matches SDK message structure from docs
  *
  * Message types:
@@ -357,6 +408,16 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
       })
       .filter(t => t.length > 0);
 
+    const fullResponse = assistantMessages.join('\n\n---\n\n');
+
+    // Parse checkpoint from response
+    const checkpoint = parseCheckpoint(fullResponse);
+    const awaitingInput = checkpoint !== null;
+
+    if (checkpoint) {
+      console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
+    }
+
     const sessionStats = sessionManager.getSessionStats(campaignSessionId);
     const campaignReport = instrumentor.getCampaignReport();
     const pipelineStatus = sessionManager.getPipelineStatus(campaignSessionId);
@@ -366,7 +427,9 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
       sessionId: campaignSessionId,
       outputDir,
       response: assistantMessages[assistantMessages.length - 1] || '',
-      fullResponse: assistantMessages.join('\n\n---\n\n'),
+      fullResponse,
+      checkpoint,           // Parsed checkpoint data (null if not at checkpoint)
+      awaitingInput,        // true if waiting for user decision
       sessionStats,
       pipeline: pipelineStatus,
       instrumentation: {
@@ -397,6 +460,7 @@ app.post('/sessions/:id/continue', async (req, res) => {
   }
 
   console.log(`🔄 Continuing session ${sessionId}`);
+  console.log(`📝 User prompt: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
 
   try {
     const messages: any[] = [];
@@ -406,6 +470,9 @@ app.post('/sessions/:id/continue', async (req, res) => {
       const { message } = result;
       messages.push(message);
       instrumentor.processMessage(message);
+
+      // Log messages for visibility
+      logSDKMessage(message, sessionId);
     }
 
     const assistantMessages = messages
@@ -419,13 +486,30 @@ app.post('/sessions/:id/continue', async (req, res) => {
       })
       .filter(t => t.length > 0);
 
+    const fullResponse = assistantMessages.join('\n\n---\n\n');
+
+    // Parse checkpoint from response
+    const checkpoint = parseCheckpoint(fullResponse);
+    const awaitingInput = checkpoint !== null;
+
+    if (checkpoint) {
+      console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
+    }
+
     const sessionStats = sessionManager.getSessionStats(sessionId);
+    const pipelineStatus = sessionManager.getPipelineStatus(sessionId);
+    const assets = sessionManager.getSessionAssets(sessionId);
 
     res.json({
       success: true,
       sessionId,
       response: assistantMessages[assistantMessages.length - 1] || '',
+      fullResponse,
+      checkpoint,           // Parsed checkpoint data
+      awaitingInput,        // true if waiting for user decision
       sessionStats,
+      pipeline: pipelineStatus,
+      assets,               // Current assets for display
       messageCount: messages.length
     });
 

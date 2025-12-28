@@ -120,6 +120,9 @@ fashion-shoot-agent/
 │   │   └── skills/                     # Agent skills
 │   │       ├── editorial-photography/  # Knowledge skill - prompt templates
 │   │       │   ├── SKILL.md
+│   │       │   ├── presets/            # Customizable presets
+│   │       │   │   ├── poses.md        # 7 pose presets
+│   │       │   │   └── backgrounds.md  # 7 background presets
 │   │       │   └── workflows/
 │   │       │       └── tim-workflow-templates.md
 │   │       └── fashion-shoot-pipeline/ # Action skill - generation scripts
@@ -509,9 +512,12 @@ The agent uses two complementary skills loaded from `.claude/skills/`:
 ```
 agent/.claude/skills/
 ├── editorial-photography/           # Knowledge skill - provides templates
-│   ├── SKILL.md                    # Skill definition
+│   ├── SKILL.md                    # Skill definition with preset tables
+│   ├── presets/                    # Customizable pose & background presets
+│   │   ├── poses.md                # 7 pose presets + custom option
+│   │   └── backgrounds.md          # 7 background presets + custom option
 │   └── workflows/
-│       └── tim-workflow-templates.md  # All prompt templates
+│       └── tim-workflow-templates.md  # Prompts with {PRESET_SNIPPET} placeholders
 └── fashion-shoot-pipeline/          # Action skill - executes generation
     ├── SKILL.md
     └── scripts/
@@ -523,14 +529,20 @@ agent/.claude/skills/
 
 **Skill 1: editorial-photography (Knowledge)**
 
-Provides exact prompt templates for the Tim workflow:
+Provides exact prompt templates for the Tim workflow with customizable presets:
 
 | Template | Purpose | Placeholders |
 |----------|---------|--------------|
-| `HERO_PROMPT` | Full-body hero shot | `{SUBJECT}`, `{WARDROBE}`, `{ACCESSORIES}`, `{POSE}`, `{BACKGROUND}` |
+| `HERO_PROMPT` | Full-body hero shot | `{POSE_PRESET_SNIPPET}`, `{BACKGROUND_PRESET_SNIPPET}` |
 | `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` (optional override) |
-| `FRAME_ISOLATION_PROMPT` | Extract single frame | `{ROW}`, `{COLUMN}` |
 | `VIDEO_PROMPTS` | Camera movements | Pre-defined per frame type |
+
+**Available Presets:**
+
+| Category | Presets | Default |
+|----------|---------|---------|
+| POSE | Confident Standing, Seated Editorial, Leaning Casual, Editorial Drama, Relaxed Natural, Street Walk, Urban Lean | Confident Standing |
+| BACKGROUND | Studio Grey, Studio White, Studio Black, Industrial, Warm Daylight, Color Gel, Outdoor Urban | Studio Grey |
 
 **Skill 2: fashion-shoot-pipeline (Action)**
 
@@ -1071,6 +1083,7 @@ const options = {
 | Video Stitching | ✅ Complete | FFmpeg xfade with easing curves |
 | Frame Cropping | ✅ Complete | Sharp-based contact sheet extraction |
 | Pipeline Tracking | ✅ Complete | Stage-by-stage progress with assets |
+| Presets Configuration | ✅ Complete | 7 pose + 7 background presets |
 
 ### Completed Implementation Phases
 
@@ -1100,6 +1113,12 @@ const options = {
 - Asset tracking per stage
 - Progress percentage reporting
 - SSE real-time updates
+
+**Phase 7:** Presets Configuration ✅
+- 7 pose presets (Confident Standing, Seated Editorial, etc.)
+- 7 background presets (Studio Grey, Industrial, Outdoor Urban, etc.)
+- Updated HERO_PROMPT with `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}`
+- Defaults: Confident Standing + Studio Grey
 
 ### Pipeline Execution Summary
 
@@ -1146,6 +1165,7 @@ The Fashion Shoot Agent is a **fully implemented** AI-powered fashion photoshoot
 
 - **Multi-stage pipeline** - 6 stages from reference analysis to final video
 - **Deterministic execution** - Fixed camera angles, style treatment, no improvisation
+- **Customizable presets** - 7 pose + 7 background options for creative control
 - **Multimodal input** - Reference images passed to Claude for analysis
 - **Real-time streaming** - SSE support for progress updates
 - **Session persistence** - Full conversation history with pipeline state
