@@ -232,7 +232,7 @@ export class SessionManager {
     try {
       const filePath = path.join(this.sessionDirectory, `${sessionId}.json`);
       await fs.writeFile(filePath, JSON.stringify(session, null, 2));
-      console.log(`💾 Saved session: ${sessionId}`);
+      // Note: Session save logging removed to reduce noise
     } catch (error) {
       console.error(`Failed to save session ${sessionId}:`, error);
     }

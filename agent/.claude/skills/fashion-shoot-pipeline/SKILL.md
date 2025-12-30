@@ -1,101 +1,22 @@
 ---
 name: fashion-shoot-pipeline
-description: Execute the fashion photoshoot generation pipeline scripts. Use after getting prompts from the editorial-photography skill. This skill runs the actual image/video generation and stitching.
+description: Execute image and video generation scripts using FAL.ai and FFmpeg. Use AFTER editorial-photography skill. Provides script commands for generate-image, crop-frames, generate-video, and stitch-videos.
 ---
 
 # Fashion Shoot Pipeline Skill
 
-This skill executes the generation pipeline using FAL.ai and FFmpeg.
+Execute the generation pipeline using FAL.ai and FFmpeg.
 
-## CRITICAL: Use With Editorial-Photography Skill
+## Prerequisite
 
-1. **First:** Use `editorial-photography` skill to get exact prompt templates
-2. **Then:** Use this skill to execute the scripts with those prompts
-
-Do NOT write your own prompts. Always get prompts from the templates.
-
-## Available Scripts
-
-### generate-image.ts
-
-Generate images via FAL.ai nano-banana-pro.
-
-```bash
-npx tsx scripts/generate-image.ts \
-  --prompt "<PROMPT_FROM_TEMPLATE>" \
-  --input ref1.jpg --input ref2.jpg \
-  --output output.png \
-  --aspect-ratio 3:2 \
-  --resolution 2K
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Use Skill tool → `editorial-photography` → Get prompts      │
+│  2. Use Skill tool → THIS skill → Execute scripts               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Options:**
-- `--prompt` (required): The generation prompt from templates
-- `--input` (optional, multiple): Reference image paths
-- `--output` (required): Output file path
-- `--aspect-ratio`: 3:2 (default), 16:9, 1:1, etc.
-- `--resolution`: 1K, 2K, 4K
-
-### crop-frames.ts
-
-Crop contact sheet grid into individual frames using Sharp.
-
-```bash
-npx tsx scripts/crop-frames.ts \
-  --input outputs/contact-sheet.png \
-  --output-dir outputs/frames/ \
-  --rows 2 \
-  --cols 3
-```
-
-**Options:**
-- `--input` (required): Input contact sheet image path
-- `--output-dir` (required): Output directory for cropped frames
-- `--rows`: Number of rows in the grid (default: 2)
-- `--cols`: Number of columns in the grid (default: 3)
-- `--gutter`: Pixels between grid cells, sets both X and Y
-- `--gutter-x`: Horizontal pixels between columns (default: 26)
-- `--gutter-y`: Vertical pixels between rows (default: 24)
-- `--format`: Output format: png, jpeg, webp (default: png)
-- `--prefix`: Output filename prefix (default: "frame")
-
-**Output:** Creates frame-1.png through frame-6.png (for 2×3 grid)
-
-### generate-video.ts
-
-Generate videos via FAL.ai Kling 2.6 Pro.
-
-```bash
-npx tsx scripts/generate-video.ts \
-  --input frame.png \
-  --prompt "<VIDEO_PROMPT_FROM_TEMPLATE>" \
-  --output video.mp4 \
-  --duration 5
-```
-
-**Options:**
-- `--input` (required): Source image path
-- `--prompt` (required): Camera movement prompt from templates
-- `--output` (required): Output video path
-- `--duration`: 5 (default) or 10 seconds
-
-### stitch-videos.ts
-
-Stitch videos with FFmpeg and eased transitions.
-
-```bash
-npx tsx scripts/stitch-videos.ts \
-  --clips video-1.mp4 --clips video-2.mp4 ... \
-  --output final.mp4 \
-  --transition fade \
-  --easing smooth \
-  --transition-duration 1.2
-```
-
-**Recommended settings for fashion:**
-- `--transition fade`
-- `--easing smooth`
-- `--transition-duration 1.2`
+**NEVER write your own prompts.** Get them from `editorial-photography` skill first.
 
 ## Pipeline Execution Order
 
@@ -107,16 +28,166 @@ npx tsx scripts/stitch-videos.ts \
 5. stitch-videos.ts              → outputs/final/fashion-video.mp4
 ```
 
-## Directory Setup
-
-Before running pipeline, ensure output directories exist:
+## Directory Setup (Run First)
 
 ```bash
 mkdir -p outputs/frames outputs/videos outputs/final
 ```
 
-## Error Handling
+---
 
-- If FAL.ai fails, check `FAL_KEY` environment variable
-- If FFmpeg fails, ensure ffmpeg is installed (`brew install ffmpeg`)
-- All scripts output to stderr for logs, stdout for result paths
+## Script: generate-image.ts
+
+Generate images via FAL.ai nano-banana-pro.
+
+```bash
+npx tsx scripts/generate-image.ts \
+  --prompt "<PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
+  --input ref1.jpg --input ref2.jpg \
+  --output output.png \
+  --aspect-ratio 3:2 \
+  --resolution 2K
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--prompt` | Yes | - | Filled prompt from editorial-photography |
+| `--input` | No | - | Reference image paths (multiple allowed) |
+| `--output` | Yes | - | Output file path |
+| `--aspect-ratio` | No | 3:2 | 3:2, 16:9, 1:1, etc. |
+| `--resolution` | No | 1K | 1K, 2K, 4K |
+
+**Errors:**
+- `FAL_KEY not set` → Add FAL_KEY to .env file
+- `Request failed` → Retry once, then report to user
+
+---
+
+## Script: crop-frames.ts
+
+Crop contact sheet into individual frames (LOCAL - no API).
+
+```bash
+npx tsx scripts/crop-frames.ts \
+  --input outputs/contact-sheet.png \
+  --output-dir outputs/frames/ \
+  --rows 2 \
+  --cols 3 \
+  --auto-detect
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--input` | Yes | - | Contact sheet image path |
+| `--output-dir` | Yes | - | Output directory for frames |
+| `--rows` | No | 2 | Grid rows |
+| `--cols` | No | 3 | Grid columns |
+| `--auto-detect` | No | false | **Recommended** - Auto-detect gutter sizes |
+| `--gutter-x` | No | 0 | Manual horizontal gap pixels |
+| `--gutter-y` | No | 0 | Manual vertical gap pixels |
+
+**Output:** `frame-1.png` through `frame-6.png`
+
+**Important:** Always use `--auto-detect` flag. FAL.ai generates varying gutter sizes.
+
+**Errors:**
+- `Input not found` → Check contact-sheet.png exists
+- `Invalid dimensions` → Try manual gutter values
+
+---
+
+## Script: generate-video.ts
+
+Generate videos via FAL.ai Kling 2.6 Pro.
+
+```bash
+npx tsx scripts/generate-video.ts \
+  --input outputs/frames/frame-1.png \
+  --prompt "<VIDEO_PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
+  --output outputs/videos/video-1.mp4 \
+  --duration 5
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--input` | Yes | - | Source frame image |
+| `--prompt` | Yes | - | Camera movement prompt from editorial-photography |
+| `--output` | Yes | - | Output video path |
+| `--duration` | No | 5 | 5 or 10 seconds |
+
+**Errors:**
+- `FAL_KEY not set` → Add FAL_KEY to .env file
+- `Timeout` → Kling takes 2-3 minutes per video, be patient
+- `Request failed` → Retry once, then report to user
+
+---
+
+## Script: stitch-videos.ts
+
+Stitch videos with FFmpeg transitions (LOCAL - no API).
+
+```bash
+npx tsx scripts/stitch-videos.ts \
+  --clips outputs/videos/video-1.mp4 \
+  --clips outputs/videos/video-2.mp4 \
+  --clips outputs/videos/video-3.mp4 \
+  --clips outputs/videos/video-4.mp4 \
+  --clips outputs/videos/video-5.mp4 \
+  --clips outputs/videos/video-6.mp4 \
+  --output outputs/final/fashion-video.mp4 \
+  --transition fade \
+  --easing smooth \
+  --transition-duration 1.2
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--clips` | Yes | - | Input video files (multiple) |
+| `--output` | Yes | - | Output video path |
+| `--transition` | No | fade | Transition type |
+| `--easing` | No | smooth | Easing curve |
+| `--transition-duration` | No | 0.5 | Transition seconds |
+
+**Recommended:** `--transition fade --easing smooth --transition-duration 1.2`
+
+**Errors:**
+- `ffmpeg not found` → Install with `brew install ffmpeg`
+- `Input file missing` → Check all 6 videos exist
+
+---
+
+## Error Recovery Summary
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| FAL_KEY not set | Missing API key | Add to .env file |
+| Request failed | API error | Retry once |
+| Timeout | Kling slow | Wait 2-3 min per video |
+| File not found | Missing output | Check previous step completed |
+| ffmpeg not found | Not installed | `brew install ffmpeg` |
+
+---
+
+## Output Structure
+
+```
+outputs/
+├── hero.png                    # From generate-image (HERO)
+├── contact-sheet.png           # From generate-image (CONTACT)
+├── frames/
+│   ├── frame-1.png            # From crop-frames
+│   ├── frame-2.png
+│   ├── frame-3.png
+│   ├── frame-4.png
+│   ├── frame-5.png
+│   └── frame-6.png
+├── videos/
+│   ├── video-1.mp4            # From generate-video
+│   ├── video-2.mp4
+│   ├── video-3.mp4
+│   ├── video-4.mp4
+│   ├── video-5.mp4
+│   └── video-6.mp4
+└── final/
+    └── fashion-video.mp4       # From stitch-videos
+```

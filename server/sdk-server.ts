@@ -1,13 +1,51 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import multer from 'multer';
 import { aiClient, sessionManager } from './lib/ai-client.js';
 import { SDKInstrumentor } from './lib/instrumentor.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 
 app.use(cors());
 app.use(express.json());
+
+// Serve generated assets from agent/outputs
+app.use('/outputs', express.static(path.join(__dirname, '../agent/outputs')));
+
+// Serve uploaded files
+const uploadsDir = path.join(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsDir));
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `${uniqueSuffix}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (_req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, WebP, and GIF are allowed.'));
+    }
+  }
+});
 
 // Store active SSE connections for streaming
 const sseConnections = new Map<string, express.Response[]>();
@@ -64,134 +102,10 @@ function parseCheckpoint(responseText: string): CheckpointData | null {
 }
 
 /**
- * Enhanced logging for SDK messages - matches SDK message structure from docs
- *
- * Message types:
- * - system (subtype: 'init') - Session initialization
- * - assistant - Claude's responses, contains tool_use blocks in message.message.content
- * - user - Tool results in message.message.content as tool_result blocks
- * - result (subtype: 'success'|'error_*') - Final result with costs
- * - stream_event - Real-time streaming (if includePartialMessages: true)
+ * Broadcast SDK message to SSE connections for frontend real-time updates
+ * Console logging is now handled by SDKInstrumentor
  */
-function logSDKMessage(message: any, sessionId: string): void {
-  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-  const prefix = `[${timestamp}]`;
-
-  switch (message.type) {
-    case 'system':
-      if (message.subtype === 'init') {
-        console.log(`${prefix} 🚀 SESSION INIT`);
-        console.log(`${prefix}    Session ID: ${message.session_id}`);
-        console.log(`${prefix}    Model: ${message.model}`);
-        console.log(`${prefix}    Tools: ${message.tools?.join(', ') || 'none'}`);
-        if (message.mcp_servers?.length > 0) {
-          console.log(`${prefix}    MCP Servers: ${message.mcp_servers.map((s: any) => s.name).join(', ')}`);
-        }
-      } else if (message.subtype === 'compact_boundary') {
-        console.log(`${prefix} 📦 CONTEXT COMPACTED`);
-      }
-      break;
-
-    case 'assistant':
-      // Assistant messages contain Claude's response and tool_use blocks
-      const assistantContent = message.message?.content;
-      if (Array.isArray(assistantContent)) {
-        for (const block of assistantContent) {
-          if (block.type === 'text') {
-            const text = block.text;
-            console.log(`${prefix} 🤖 ASSISTANT TEXT:`);
-            // Show meaningful preview
-            const lines = text.substring(0, 600).split('\n').slice(0, 10);
-            lines.forEach((line: string) => {
-              if (line.trim()) {
-                console.log(`${prefix}    ${line.substring(0, 120)}`);
-              }
-            });
-            if (text.length > 600) {
-              console.log(`${prefix}    ... (${text.length} chars total)`);
-            }
-          } else if (block.type === 'tool_use') {
-            // Tool invocation from Claude
-            console.log(`${prefix} 🔧 TOOL CALL: ${block.name}`);
-            console.log(`${prefix}    Tool ID: ${block.id}`);
-            if (block.input) {
-              const inputStr = JSON.stringify(block.input, null, 2);
-              const inputLines = inputStr.split('\n').slice(0, 6);
-              inputLines.forEach((line: string) => {
-                console.log(`${prefix}    ${line.substring(0, 100)}`);
-              });
-              if (inputStr.split('\n').length > 6) {
-                console.log(`${prefix}    ...`);
-              }
-            }
-          }
-        }
-      }
-      // Log token usage from assistant message
-      const usage = message.message?.usage;
-      if (usage) {
-        console.log(`${prefix} 📊 TOKENS: input=${usage.input_tokens || 0}, output=${usage.output_tokens || 0}, cache_read=${usage.cache_read_input_tokens || 0}, cache_write=${usage.cache_creation_input_tokens || 0}`);
-      }
-      break;
-
-    case 'user':
-      // User messages contain tool_result blocks
-      const userContent = message.message?.content;
-      if (Array.isArray(userContent)) {
-        for (const block of userContent) {
-          if (block.type === 'tool_result') {
-            const resultContent = typeof block.content === 'string'
-              ? block.content
-              : JSON.stringify(block.content);
-            const preview = resultContent.substring(0, 200);
-            console.log(`${prefix} ✅ TOOL RESULT (${block.tool_use_id?.substring(0, 8)}...):`);
-            console.log(`${prefix}    ${preview}${resultContent.length > 200 ? '...' : ''}`);
-            if (block.is_error) {
-              console.log(`${prefix}    ⚠️  Tool returned error`);
-            }
-          } else if (block.type === 'text') {
-            console.log(`${prefix} 👤 USER INPUT: ${block.text?.substring(0, 100) || ''}`);
-          } else if (block.type === 'image') {
-            console.log(`${prefix} 🖼️  USER IMAGE: ${block.source?.media_type || 'unknown type'}`);
-          }
-        }
-      }
-      break;
-
-    case 'result':
-      // Final result message
-      if (message.subtype === 'success') {
-        console.log(`${prefix} ✨ SESSION COMPLETE`);
-        console.log(`${prefix}    Duration: ${message.duration_ms}ms`);
-        console.log(`${prefix}    Cost: $${(message.total_cost_usd || 0).toFixed(4)}`);
-        console.log(`${prefix}    Turns: ${message.num_turns || 0}`);
-        if (message.usage) {
-          console.log(`${prefix}    Total tokens: input=${message.usage.input_tokens || 0}, output=${message.usage.output_tokens || 0}`);
-        }
-      } else {
-        // Error cases: error_max_turns, error_during_execution, error_max_budget_usd
-        console.log(`${prefix} ❌ SESSION ERROR: ${message.subtype}`);
-        if (message.errors) {
-          message.errors.forEach((err: string) => {
-            console.log(`${prefix}    ${err}`);
-          });
-        }
-      }
-      break;
-
-    case 'stream_event':
-      // Real-time streaming events (only if includePartialMessages: true)
-      const event = message.event;
-      if (event?.type === 'content_block_delta' && event?.delta?.text) {
-        process.stdout.write(event.delta.text);
-      }
-      break;
-
-    default:
-      console.log(`${prefix} 📨 ${message.type?.toUpperCase() || 'UNKNOWN'}: ${JSON.stringify(message).substring(0, 150)}`);
-  }
-
-  // Broadcast to SSE connections for real-time client updates
+function broadcastSDKMessage(message: any, sessionId: string): void {
   broadcastToSSE(sessionId, message);
 }
 
@@ -215,7 +129,7 @@ function broadcastToSSE(sessionId: string, message: any): void {
 }
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({
     status: 'healthy',
     agent: 'fashion-shoot-agent',
@@ -228,8 +142,37 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Upload multiple images (subject + reference images)
+app.post('/upload', upload.array('images', 10), (req, res) => {
+  const files = req.files as Express.Multer.File[];
+
+  if (!files || files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'No files uploaded'
+    });
+  }
+
+  const uploadedFiles = files.map(file => ({
+    originalName: file.originalname,
+    filename: file.filename,
+    path: file.path,
+    size: file.size,
+    mimetype: file.mimetype,
+    url: `/uploads/${file.filename}`
+  }));
+
+  console.log(`📤 Uploaded ${files.length} file(s):`, uploadedFiles.map(f => f.originalName).join(', '));
+
+  res.json({
+    success: true,
+    count: uploadedFiles.length,
+    files: uploadedFiles
+  });
+});
+
 // List sessions
-app.get('/sessions', (req, res) => {
+app.get('/sessions', (_req, res) => {
   const sessions = sessionManager.getActiveSessions();
   res.json({
     success: true,
@@ -392,8 +335,8 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
       messages.push(message);
       instrumentor.processMessage(message);
 
-      // Enhanced logging for all message types
-      logSDKMessage(message, campaignSessionId);
+      // Broadcast to SSE for frontend updates
+      broadcastSDKMessage(message, campaignSessionId);
     }
 
     // Extract assistant responses
@@ -418,11 +361,18 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
       console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
     }
 
-    const sessionStats = sessionManager.getSessionStats(campaignSessionId);
-    const campaignReport = instrumentor.getCampaignReport();
-    const pipelineStatus = sessionManager.getPipelineStatus(campaignSessionId);
+    let sessionStats, campaignReport, pipelineStatus;
+    try {
+      sessionStats = sessionManager.getSessionStats(campaignSessionId);
+      campaignReport = instrumentor.getCampaignReport();
+      pipelineStatus = sessionManager.getPipelineStatus(campaignSessionId);
+    } catch (statsError: any) {
+      console.error('❌ Error getting stats:', statsError.message);
+    }
 
-    res.json({
+    console.log('📤 Sending response to client...');
+
+    const responseData = {
       success: true,
       sessionId: campaignSessionId,
       outputDir,
@@ -430,23 +380,139 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
       fullResponse,
       checkpoint,           // Parsed checkpoint data (null if not at checkpoint)
       awaitingInput,        // true if waiting for user decision
-      sessionStats,
-      pipeline: pipelineStatus,
-      instrumentation: {
+      sessionStats: sessionStats || null,
+      pipeline: pipelineStatus || null,
+      instrumentation: campaignReport ? {
         ...campaignReport,
         costBreakdown: instrumentor.getCostBreakdown()
-      }
-    });
+      } : null
+    };
+
+    console.log('📤 Response data prepared, sending...');
+    res.json(responseData);
+    console.log('✅ Response sent successfully');
 
   } catch (error: any) {
     console.error('❌ Error:', error.message);
-    await sessionManager.updatePipelineStage(campaignSessionId, 'error', error.message);
+    console.error('❌ Stack:', error.stack);
+    try {
+      await sessionManager.updatePipelineStage(campaignSessionId, 'error', error.message);
+    } catch (e) {
+      // ignore
+    }
     res.status(500).json({
       success: false,
       error: error.message,
       sessionId: campaignSessionId,
       outputDir
     });
+  }
+});
+
+// Streaming generate endpoint - streams tokens in real-time via SSE
+app.post('/generate-stream', async (req, res) => {
+  const { prompt, sessionId, inputImages } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: 'Prompt is required' });
+  }
+
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const campaignSessionId = sessionId || `session_${Date.now()}`;
+  const instrumentor = new SDKInstrumentor(campaignSessionId, prompt);
+
+  console.log('🎬 Starting streaming generation');
+  console.log('📝 Prompt:', prompt.substring(0, 100) + (prompt.length > 100 ? '...' : ''));
+
+  // Send session ID immediately
+  res.write(`data: ${JSON.stringify({ type: 'session_init', sessionId: campaignSessionId })}\n\n`);
+
+  let outputDir: string;
+  try {
+    await sessionManager.getOrCreateSession(campaignSessionId);
+    outputDir = await sessionManager.createSessionDirectories(campaignSessionId);
+
+    if (inputImages && Array.isArray(inputImages)) {
+      await sessionManager.addInputImages(campaignSessionId, inputImages);
+    }
+  } catch (dirError: any) {
+    res.write(`data: ${JSON.stringify({ type: 'error', error: dirError.message })}\n\n`);
+    res.end();
+    return;
+  }
+
+  try {
+    const images = inputImages && Array.isArray(inputImages) ? inputImages : [];
+    let fullPrompt = prompt;
+
+    if (images.length > 0) {
+      const inputFlags = images.map((img: string) => `--input "${img}"`).join(' ');
+      fullPrompt = `${prompt}
+
+## Reference Image File Paths (use ALL of these with --input flags in generate-image.ts)
+${images.map((img: string, i: number) => `- Reference ${i + 1}: ${img}`).join('\n')}
+
+CRITICAL: You MUST pass ALL reference images using multiple --input flags to preserve subject appearance AND include all referenced items (watch, jacket, etc.).
+
+Example command with ALL ${images.length} reference images:
+npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/hero.png --aspect-ratio 3:2 --resolution 2K`;
+    }
+
+    const assistantMessages: string[] = [];
+
+    for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, undefined, images)) {
+      const { message } = result;
+      instrumentor.processMessage(message);
+
+      // Stream different message types
+      if (message.type === 'stream_event') {
+        // Token-by-token streaming
+        const event = (message as any).event;
+        if (event?.type === 'content_block_delta' && event?.delta?.text) {
+          res.write(`data: ${JSON.stringify({ type: 'text_delta', text: event.delta.text })}\n\n`);
+        }
+      } else if (message.type === 'assistant') {
+        // Full assistant message - extract text
+        const content = (message as any).message?.content;
+        if (Array.isArray(content)) {
+          const text = content.find((c: any) => c.type === 'text')?.text || '';
+          if (text) {
+            assistantMessages.push(text);
+            res.write(`data: ${JSON.stringify({ type: 'assistant_message', text })}\n\n`);
+          }
+        }
+      } else if (message.type === 'system') {
+        // System messages (tool calls, etc)
+        res.write(`data: ${JSON.stringify({ type: 'system', subtype: (message as any).subtype, data: message })}\n\n`);
+      } else if (message.type === 'result') {
+        // Final result
+        const fullResponse = assistantMessages.join('\n\n---\n\n');
+        const checkpoint = parseCheckpoint(fullResponse);
+
+        res.write(`data: ${JSON.stringify({
+          type: 'complete',
+          sessionId: campaignSessionId,
+          outputDir,
+          response: assistantMessages[assistantMessages.length - 1] || '',
+          checkpoint,
+          awaitingInput: checkpoint !== null,
+          sessionStats: sessionManager.getSessionStats(campaignSessionId),
+          pipeline: sessionManager.getPipelineStatus(campaignSessionId),
+          instrumentation: instrumentor.getCampaignReport()
+        })}\n\n`);
+      }
+    }
+
+    res.end();
+  } catch (error: any) {
+    console.error('❌ Streaming error:', error.message);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+    res.end();
   }
 });
 
@@ -471,8 +537,8 @@ app.post('/sessions/:id/continue', async (req, res) => {
       messages.push(message);
       instrumentor.processMessage(message);
 
-      // Log messages for visibility
-      logSDKMessage(message, sessionId);
+      // Broadcast to SSE for frontend updates
+      broadcastSDKMessage(message, sessionId);
     }
 
     const assistantMessages = messages

@@ -75,7 +75,7 @@ export class AIClient {
 
     this.defaultOptions = {
       cwd: projectRoot,
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5-20251101',
       maxTurns: 100,  // Full pipeline needs ~50-80 turns (hero + contact + 6 frames + 6 videos + stitch)
       settingSources: ['user', 'project'],
       allowedTools: [
@@ -149,6 +149,7 @@ export class AIClient {
     const queryOptions = {
       ...this.defaultOptions,
       ...resumeOptions,
+      includePartialMessages: true,  // Enable real-time token streaming
       abortController
     };
 
@@ -169,9 +170,14 @@ export class AIClient {
 
         await this.sessionManager.addMessage(session.id, message);
         yield { message, sessionId: session.id };
-      }
 
-      abortController.abort();
+        // Abort the generator after receiving the result message
+        // This allows the for-await loop to complete
+        if (message.type === 'result') {
+          abortController.abort();
+          break;
+        }
+      }
     } catch (error) {
       abortController.abort();
       throw error;

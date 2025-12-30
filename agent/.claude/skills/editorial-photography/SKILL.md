@@ -1,98 +1,54 @@
 ---
 name: editorial-photography
-description: Execute the Tim workflow for fashion editorial photography. Use when generating hero images, contact sheets, and frame isolations. This skill provides EXACT prompt templates with customizable POSE and BACKGROUND presets.
+description: Provides prompt templates and presets for Tim workflow editorial fashion photography. Contains HERO_PROMPT, CONTACT_SHEET_PROMPT, and 6 VIDEO_PROMPTS with 7 pose and 7 background presets. Use FIRST before fashion-shoot-pipeline skill.
 ---
 
-# Editorial Photography Skill (Tim Workflow)
+# Editorial Photography Skill
 
-This skill provides **exact prompt templates** for the Tim workflow fashion pipeline with **customizable presets** for pose and background.
+Provides **prompt templates** and **presets** for the Tim workflow fashion pipeline.
 
-## CRITICAL: No Improvisation
+**After getting prompts from this skill** → Use `fashion-shoot-pipeline` skill for script execution.
 
-- **DO NOT** change camera angles or shot types
-- **DO NOT** modify the style block (Fuji Velvia treatment)
-- **DO NOT** skip or reorder pipeline stages
-- **DO** use presets from `presets/` directory for pose and background
-- **DO** follow the exact prompt structure
+## Quick Preset Selection
 
-## When to Use
+Match user's vibe to presets:
 
-Invoke this skill when:
-- User provides reference images for a fashion shoot
-- You need to generate hero image, contact sheet, or frame isolations
-- You need the exact prompt templates for image generation
+| User Says | Pose Preset | Background Preset |
+|-----------|-------------|-------------------|
+| edgy, dramatic, bold, intense | `editorial-drama` | `studio-black` |
+| casual, relaxed, natural, chill | `relaxed-natural` | `studio-grey` |
+| street, urban, city | `street-walk` | `outdoor-urban` |
+| professional, clean, commercial | `confident-standing` | `studio-white` |
+| industrial, raw, concrete | `leaning-casual` | `industrial` |
+| warm, soft, intimate | `seated-editorial` | `warm-daylight` |
+| colorful, vibrant, bold colors | `editorial-drama` | `color-gel` |
+| *(no preference stated)* | `confident-standing` | `studio-grey` |
 
-## Workflow Overview
+**Full preset snippets:** `presets/options.md`
 
-```
-Stage 1: SELECT      → Choose POSE and BACKGROUND presets (or use defaults)
-Stage 2: HERO        → Generate full-body hero shot with selected presets
-Stage 3: CONTACT     → Generate 2×3 grid (6 camera angles)
-Stage 4: CROP        → Crop contact sheet into 6 frames
-Stage 5: VIDEO       → Generate video from each frame (6 times)
-Stage 6: STITCH      → Combine videos with transitions
-```
+## Available Prompts
 
-## Customizable Presets
+| Prompt | Location | Use For |
+|--------|----------|---------|
+| HERO_PROMPT | `prompts/hero.md` | Full-body hero shot |
+| CONTACT_SHEET_PROMPT | `prompts/contact-sheet.md` | 2×3 grid of 6 camera angles |
+| VIDEO_PROMPTS (×6) | `prompts/video.md` | Camera movement per frame |
 
-### POSE Presets (7 options)
-See `presets/poses.md` for full details.
-
-| # | Preset | Style |
-|---|--------|-------|
-| 1 | Confident Standing | Editorial attitude, hand on hip (DEFAULT) |
-| 2 | Seated Editorial | Elegant floor sitting |
-| 3 | Leaning Casual | Relaxed against wall |
-| 4 | Editorial Drama | Angular high-fashion |
-| 5 | Relaxed Natural | Candid, authentic |
-| 6 | Street Walk | Mid-stride urban walk |
-| 7 | Urban Lean | Street style against wall |
-
-### BACKGROUND Presets (7 options)
-See `presets/backgrounds.md` for full details.
-
-| # | Preset | Style |
-|---|--------|-------|
-| 1 | Studio Grey | Clean seamless backdrop (DEFAULT) |
-| 2 | Studio White | High-key commercial |
-| 3 | Studio Black | Dramatic low-key |
-| 4 | Industrial | Raw concrete, urban texture |
-| 5 | Warm Daylight | Natural window light |
-| 6 | Color Gel | Bold colored backdrop |
-| 7 | Outdoor Urban | City street environment |
-
-## The 6 Camera Angles (FIXED - Never Change)
+## The 6 Camera Angles (FIXED)
 
 ```
 ┌─────────────────┬─────────────────┬─────────────────┐
-│  Frame 1 (R1C1) │  Frame 2 (R1C2) │  Frame 3 (R1C3) │
+│  Frame 1        │  Frame 2        │  Frame 3        │
 │  Beauty Portrait│  High-Angle 3/4 │  Low-Angle Full │
 ├─────────────────┼─────────────────┼─────────────────┤
-│  Frame 4 (R2C1) │  Frame 5 (R2C2) │  Frame 6 (R2C3) │
+│  Frame 4        │  Frame 5        │  Frame 6        │
 │  Side-On Profile│  Intimate Close │  Extreme Detail │
 └─────────────────┴─────────────────┴─────────────────┘
 ```
 
-## How to Use
+## Style Treatment (FIXED - Never Modify)
 
-1. Read `presets/poses.md` and `presets/backgrounds.md` for preset options
-2. Read `workflows/tim-workflow-templates.md` for prompt templates
-3. Fill `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}` with selected presets
-4. Execute prompts through the fashion-shoot-pipeline scripts
-
-## Available Templates
-
-| Template | Purpose | Placeholders |
-|----------|---------|--------------|
-| `HERO_PROMPT` | Full-body hero shot | `{POSE_PRESET_SNIPPET}`, `{BACKGROUND_PRESET_SNIPPET}` |
-| `CONTACT_SHEET_PROMPT` | 6-angle grid | `{STYLE_DETAILS}` (optional override) |
-| `VIDEO_PROMPTS` | Camera movements | Pre-defined per frame type |
-
-**Note:** Frame extraction is done programmatically via `crop-frames.ts` (no prompt needed).
-
-## Style Treatment (FIXED)
-
-All images use this exact style block - never modify:
+All images use this exact Fuji Velvia treatment:
 
 ```
 The image is shot on fuji velvia film on a 55mm prime lens with a hard flash,
@@ -102,3 +58,23 @@ oversaturated. The skin appears shiny (almost oily).
 
 3:2 aspect ratio
 ```
+
+**If subject has glasses**, append: `"and there are harsh white reflections on the glasses frames."`
+
+## Handoff to Pipeline
+
+After selecting presets and filling prompt templates:
+
+1. You have: filled HERO_PROMPT, CONTACT_SHEET_PROMPT, VIDEO_PROMPTS
+2. **Next:** Use Skill tool → `fashion-shoot-pipeline`
+3. Pass filled prompts to script `--prompt` flags
+
+## Rules
+
+- ✅ Read `presets/options.md` for exact preset snippets
+- ✅ Fill `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}` in templates
+- ✅ Fill `{STYLE_DETAILS}` based on glasses presence
+- ✅ Chain to `fashion-shoot-pipeline` skill after getting prompts
+- ❌ Never modify style treatment
+- ❌ Never change the 6 camera angles
+- ❌ Never write custom prompts - use templates exactly
