@@ -6,26 +6,30 @@ AI-powered fashion photoshoot generator built on the **Claude Agent SDK**. Trans
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                    FRONTEND                                      │
-│                          React + Tailwind + Framer Motion                        │
+│                              FRONTEND (:5173)                                    │
+│                      React 19 + Tailwind CSS 4 + Framer Motion                   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
-│  │  ChatInput   │  │  ChatView    │  │  Checkpoint  │  │  Progress/Video      │ │
-│  │  + Upload    │  │  Messages    │  │  Actions     │  │  Components          │ │
+│  │  ChatInput   │  │  ChatView    │  │  Checkpoint  │  │  ImageGrid/Video     │ │
+│  │  + Upload    │  │  + Thinking  │  │  Messages    │  │  Components          │ │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘ │
-└─────────┼─────────────────┼─────────────────┼─────────────────────┼─────────────┘
-          │                 │                 │                     │
-          └─────────────────┴─────────────────┴─────────────────────┘
-                                      │ HTTP/SSE
-                                      ▼
+│         │                 │                 │                     │             │
+│         └─────────────────┴─────────────────┴─────────────────────┘             │
+│                                      │                                           │
+│                    useStreamingGenerate (SSE consumer)                           │
+└──────────────────────────────────────┼───────────────────────────────────────────┘
+                                       │ POST /api/generate-stream
+                                       │ POST /api/sessions/:id/continue-stream
+                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                              EXPRESS SERVER (:3002)                              │
 │  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ /generate  /sessions/:id/continue  /upload  /health  /sessions  /stream   │ │
+│  │ /generate-stream  /continue-stream  /upload  /health  /sessions  /outputs │ │
 │  └────────────────────────────────────────────────────────────────────────────┘ │
 │           │                    │                    │                           │
 │  ┌────────▼────────┐  ┌───────▼────────┐  ┌───────▼────────┐                   │
 │  │    AIClient     │  │ SessionManager │  │ SDKInstrumentor│                   │
-│  │  (SDK wrapper)  │  │  (persistence) │  │ (cost tracking)│                   │
+│  │  + PostToolUse  │  │  (persistence) │  │ (cost tracking)│                   │
+│  │    Hooks        │  │                │  │                │                   │
 │  └────────┬────────┘  └───────┬────────┘  └────────────────┘                   │
 └───────────┼───────────────────┼─────────────────────────────────────────────────┘
             │                   │
@@ -81,13 +85,13 @@ AI-powered fashion photoshoot generator built on the **Claude Agent SDK**. Trans
 
 ```
 fashion-shoot-agent/
-├── server/                          # HTTP Server Layer (1,938 lines)
-│   ├── sdk-server.ts               # Express app (610 lines)
+├── server/                          # HTTP Server Layer
+│   ├── sdk-server.ts               # Express app + SSE streaming endpoints
 │   └── lib/
-│       ├── ai-client.ts            # SDK wrapper with multimodal (214 lines)
-│       ├── session-manager.ts      # Persistence + pipeline tracking (628 lines)
-│       ├── instrumentor.ts         # Cost & metrics tracking (393 lines)
-│       └── orchestrator-prompt.ts  # Tim workflow system prompt (93 lines)
+│       ├── ai-client.ts            # SDK wrapper + PostToolUse checkpoint hooks
+│       ├── session-manager.ts      # Persistence + pipeline tracking
+│       ├── instrumentor.ts         # Cost & metrics tracking
+│       └── orchestrator-prompt.ts  # Workflow system prompt
 │
 ├── agent/                           # Agent Configuration
 │   ├── .claude/skills/
@@ -98,23 +102,29 @@ fashion-shoot-agent/
 │   │   │
 │   │   └── fashion-shoot-pipeline/ # Action skill
 │   │       ├── SKILL.md           # Pipeline documentation
-│   │       └── scripts/           # 4 generation scripts (1,278 lines)
+│   │       └── scripts/           # 4 generation scripts
 │   │
 │   └── outputs/                    # Generated assets
 │       ├── hero.png               # Full-body hero shot
 │       ├── contact-sheet.png      # 2×3 grid
 │       ├── frames/frame-{1-6}.png # Individual frames
 │       ├── videos/video-{1-6}.mp4 # Individual clips
-│       └── final/fashion-video.mp4 # Stitched output
+│       └── final/fashion-video.mp4 # Stitched output (H.264 yuv420p)
 │
-├── frontend/                        # React Frontend (1,835 lines)
+├── frontend/                        # React Frontend
 │   ├── src/
-│   │   ├── components/            # 13 components
-│   │   │   ├── chat/              # ChatView, ChatInput, Messages
+│   │   ├── components/
+│   │   │   ├── chat/              # ChatView, ChatInput, TextMessage,
+│   │   │   │                      # ThinkingMessage, ImageMessage, VideoMessage,
+│   │   │   │                      # ImageGrid, CheckpointMessage, ProgressMessage
 │   │   │   ├── layout/            # AppShell
-│   │   │   └── ui/                # Button, Spinner
-│   │   ├── hooks/                 # useStreamingGenerate, useSession
-│   │   └── lib/                   # api.ts, types.ts
+│   │   │   └── ui/                # Button, IconButton, Spinner
+│   │   ├── hooks/
+│   │   │   └── useStreamingGenerate.ts  # SSE stream consumer + state management
+│   │   └── lib/
+│   │       ├── api.ts             # REST API client
+│   │       └── types.ts           # TypeScript interfaces
+│   ├── vite.config.ts             # Proxy config for /api, /outputs, /uploads
 │   └── package.json
 │
 ├── sessions/                        # Persisted session JSON files
@@ -157,6 +167,15 @@ fashion-shoot-agent/
 
 ## API Endpoints
 
+### Streaming Endpoints (Primary)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/generate-stream` | POST | Start generation with SSE streaming |
+| `/sessions/:id/continue-stream` | POST | Continue session with SSE streaming |
+
+### REST Endpoints
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check with config status |
@@ -164,15 +183,29 @@ fashion-shoot-agent/
 | `/sessions/:id` | GET | Session statistics |
 | `/sessions/:id/pipeline` | GET | Pipeline stage and assets |
 | `/sessions/:id/assets` | GET | All generated assets |
-| `/sessions/:id/stream` | GET | SSE real-time updates |
-| `/sessions/:id/continue` | POST | Continue with new prompt |
-| `/generate` | POST | Main generation (multimodal) |
-| `/generate-stream` | POST | Streaming generation via SSE |
+| `/sessions/:id/continue` | POST | Continue (non-streaming) |
+| `/generate` | POST | Generate (non-streaming) |
 | `/upload` | POST | Upload reference images (max 10) |
 
-**Static Files:**
-- `/outputs/*` → `agent/outputs/`
-- `/uploads/*` → `uploads/`
+### Static Files
+
+| Path | Maps To |
+|------|---------|
+| `/outputs/*` | `agent/outputs/` |
+| `/uploads/*` | `uploads/` |
+
+### Vite Proxy (Development)
+
+Frontend runs on `:5173`, proxies to server on `:3002`:
+
+```typescript
+// vite.config.ts
+proxy: {
+  '/api': { target: 'http://localhost:3002', rewrite: path => path.replace(/^\/api/, '') },
+  '/outputs': { target: 'http://localhost:3002' },
+  '/uploads': { target: 'http://localhost:3002' },
+}
+```
 
 ---
 
@@ -353,6 +386,114 @@ The server still supports text parsing as a fallback, but hook-detected checkpoi
 
 ---
 
+## Frontend Streaming Architecture
+
+The frontend uses Server-Sent Events (SSE) for real-time token streaming and checkpoint notifications.
+
+### SSE Event Flow
+
+```
+Server                                    Frontend (useStreamingGenerate)
+  │                                              │
+  ├─ session_init ─────────────────────────────► Set sessionId
+  │                                              │
+  ├─ text_delta ───────────────────────────────► Append to streaming message
+  │    (token by token)                          │
+  │                                              │
+  ├─ content_block_start { type: 'tool_use' } ──► (detected on server)
+  │                                              │
+  ├─ message_type_hint: 'thinking' ────────────► Convert message to ThinkingMessage
+  │                                              │
+  ├─ text_delta ───────────────────────────────► Append to thinking message
+  │                                              │
+  ├─ assistant_message ────────────────────────► Finalize message, create new placeholder
+  │                                              │
+  ├─ system { subtype: 'tool_call' } ──────────► Show activity indicator (●●●)
+  │                                              │
+  ├─ checkpoint ───────────────────────────────► Add artifact + CheckpointMessage
+  │    { stage, artifact, message }              │
+  │                                              │
+  └─ complete ─────────────────────────────────► End generation, update state
+       { checkpoint, sessionStats }
+```
+
+### Message Types
+
+| Type | Description | Component |
+|------|-------------|-----------|
+| `text` | Normal assistant response | `TextMessage` |
+| `thinking` | Intermediate message with tool_use (collapsible) | `ThinkingMessage` |
+| `image` | Generated image artifact | `ImageMessage` / `ImageGrid` |
+| `video` | Generated video artifact | `VideoMessage` |
+| `checkpoint` | Pipeline checkpoint with actions | `CheckpointMessage` |
+| `progress` | Progress indicator | `ProgressMessage` |
+
+### Thinking vs Response Detection
+
+The SDK streams text token-by-token, but we only know if a message is "thinking" (has `tool_use`) after streaming completes. Solution:
+
+1. Server detects `tool_use` early via `content_block_start` stream event
+2. Server sends `message_type_hint: 'thinking'` immediately
+3. Frontend converts current streaming message to `ThinkingMessage` type
+4. Thinking messages render collapsed with dimmed styling
+
+```typescript
+// Server: sdk-server.ts
+if (event?.type === 'content_block_start') {
+  if (event.content_block?.type === 'tool_use') {
+    res.write(`data: ${JSON.stringify({
+      type: 'message_type_hint',
+      messageType: 'thinking'
+    })}\n\n`);
+  }
+}
+```
+
+### Image Grouping
+
+Consecutive image messages (3+) are automatically grouped into a 2×3 grid:
+
+```typescript
+// ChatView.tsx - groupMessages()
+if (consecutiveImages.length >= 3) {
+  return { type: 'image-grid', images: consecutiveImages };
+}
+```
+
+---
+
+## Video Encoding Requirements
+
+Videos must be encoded with browser-compatible settings for web playback.
+
+### Required Settings (stitch-videos.ts)
+
+```typescript
+.outputOptions([
+  "-c:v", "libx264",         // H.264 codec
+  "-profile:v", "high",      // High profile (not 4:4:4)
+  "-pix_fmt", "yuv420p",     // YUV 4:2:0 (required for browsers)
+  "-crf", "18",              // Quality (lower = better, 18-23 recommended)
+  "-movflags", "+faststart"  // Move moov atom for streaming
+])
+```
+
+### Why These Settings?
+
+| Setting | Reason |
+|---------|--------|
+| `yuv420p` | Browsers don't support `yuv444p` (4:4:4 chroma) |
+| `profile:v high` | `High 4:4:4 Predictive` profile not supported in browsers |
+| `movflags +faststart` | Moves metadata to file start for progressive playback |
+
+### Common Error
+
+If video shows play button but fails with `NotSupportedError: The element has no supported sources`:
+- Check pixel format: `ffprobe -v error -show_entries stream=pix_fmt video.mp4`
+- Should be `yuv420p`, not `yuv444p`
+
+---
+
 ## Cost Tracking
 
 The `SDKInstrumentor` tracks:
@@ -387,17 +528,20 @@ PORT=3002                      # Optional
 
 ## Implementation Status
 
-| Component | Status | Lines |
+| Component | Status | Notes |
 |-----------|--------|-------|
-| HTTP Server | ✅ Complete | 610 |
-| AIClient | ✅ Complete | 214 |
-| SessionManager | ✅ Complete | 628 |
-| Instrumentor | ✅ Complete | 393 |
-| System Prompt | ✅ Complete | 93 |
-| editorial-photography Skill | ✅ Complete | 487 |
-| fashion-shoot-pipeline Skill | ✅ Complete | 1,471 |
-| Frontend Components | ✅ Complete | 1,835 |
-| **Total** | **94%** | **~5,700** |
+| HTTP Server | ✅ Complete | SSE streaming endpoints |
+| AIClient + Hooks | ✅ Complete | PostToolUse checkpoint detection |
+| SessionManager | ✅ Complete | Persistence + pipeline tracking |
+| Instrumentor | ✅ Complete | Cost & metrics tracking |
+| System Prompt | ✅ Complete | Orchestrator workflow |
+| editorial-photography Skill | ✅ Complete | 7 poses, 7 backgrounds |
+| fashion-shoot-pipeline Skill | ✅ Complete | 4 scripts, browser-compatible video |
+| Frontend Streaming | ✅ Complete | SSE consumer, thinking/response separation |
+| Frontend Components | ✅ Complete | 12 components (chat, ui, layout) |
+| Image Grid | ✅ Complete | Auto-grouping 3+ consecutive images |
+| Video Playback | ✅ Complete | H.264 yuv420p encoding |
+| Checkpoint UI | ✅ Complete | Hero, frames, complete stages |
 
 **Remaining:**
 - Preset selection UI (partial)

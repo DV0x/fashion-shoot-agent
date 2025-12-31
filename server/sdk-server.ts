@@ -479,6 +479,8 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
     }
 
     const assistantMessages: string[] = [];
+    let currentMessageHasToolUse = false;  // Track if current message will have tool_use
+    let hintSent = false;  // Track if we've sent a hint for current message
 
     for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, undefined, images)) {
       const { message } = result;
@@ -486,21 +488,40 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
 
       // Stream different message types
       if (message.type === 'stream_event') {
-        // Token-by-token streaming
         const event = (message as any).event;
+
+        // Detect tool_use early via content_block_start
+        if (event?.type === 'content_block_start') {
+          if (event.content_block?.type === 'tool_use') {
+            currentMessageHasToolUse = true;
+            // Send hint immediately so frontend can switch to thinking mode
+            if (!hintSent) {
+              res.write(`data: ${JSON.stringify({ type: 'message_type_hint', messageType: 'thinking' })}\n\n`);
+              hintSent = true;
+            }
+          }
+        }
+
+        // Token-by-token streaming
         if (event?.type === 'content_block_delta' && event?.delta?.text) {
           res.write(`data: ${JSON.stringify({ type: 'text_delta', text: event.delta.text })}\n\n`);
         }
       } else if (message.type === 'assistant') {
-        // Full assistant message - extract text
+        // Full assistant message - extract text and confirm type
         const content = (message as any).message?.content;
         if (Array.isArray(content)) {
           const text = content.find((c: any) => c.type === 'text')?.text || '';
+          const hasToolUse = content.some((c: any) => c.type === 'tool_use');
+          // Messages with tool_use are "thinking" (intermediate), others are "response" (final)
+          const messageType = hasToolUse ? 'thinking' : 'response';
           if (text) {
             assistantMessages.push(text);
-            res.write(`data: ${JSON.stringify({ type: 'assistant_message', text })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'assistant_message', messageType, text })}\n\n`);
           }
         }
+        // Reset for next message
+        currentMessageHasToolUse = false;
+        hintSent = false;
       } else if (message.type === 'system') {
         // System messages (tool calls, etc)
         res.write(`data: ${JSON.stringify({ type: 'system', subtype: (message as any).subtype, data: message })}\n\n`);
@@ -607,6 +628,154 @@ app.post('/sessions/:id/continue', async (req, res) => {
   }
 });
 
+// Streaming continue endpoint - streams tokens in real-time via SSE
+app.post('/sessions/:id/continue-stream', async (req, res) => {
+  const { prompt } = req.body;
+  const sessionId = req.params.id;
+
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: 'Prompt is required' });
+  }
+
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  console.log(`🔄 Streaming continue for session ${sessionId}`);
+  console.log(`📝 User prompt: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
+
+  const instrumentor = new SDKInstrumentor(sessionId, prompt);
+
+  try {
+    const assistantMessages: string[] = [];
+    let currentMessageHasToolUse = false;  // Track if current message will have tool_use
+    let hintSent = false;  // Track if we've sent a hint for current message
+
+    for await (const result of aiClient.queryWithSession(prompt, sessionId)) {
+      const { message } = result;
+      instrumentor.processMessage(message);
+
+      // Stream different message types (same pattern as /generate-stream)
+      if (message.type === 'stream_event') {
+        const event = (message as any).event;
+
+        // Detect tool_use early via content_block_start
+        if (event?.type === 'content_block_start') {
+          if (event.content_block?.type === 'tool_use') {
+            currentMessageHasToolUse = true;
+            // Send hint immediately so frontend can switch to thinking mode
+            if (!hintSent) {
+              res.write(`data: ${JSON.stringify({ type: 'message_type_hint', messageType: 'thinking' })}\n\n`);
+              hintSent = true;
+            }
+          }
+        }
+
+        // Token-by-token streaming
+        if (event?.type === 'content_block_delta' && event?.delta?.text) {
+          res.write(`data: ${JSON.stringify({ type: 'text_delta', text: event.delta.text })}\n\n`);
+        }
+      } else if (message.type === 'assistant') {
+        // Full assistant message - extract text and confirm type
+        const content = (message as any).message?.content;
+        if (Array.isArray(content)) {
+          const text = content.find((c: any) => c.type === 'text')?.text || '';
+          const hasToolUse = content.some((c: any) => c.type === 'tool_use');
+          // Messages with tool_use are "thinking" (intermediate), others are "response" (final)
+          const messageType = hasToolUse ? 'thinking' : 'response';
+          if (text) {
+            assistantMessages.push(text);
+            res.write(`data: ${JSON.stringify({ type: 'assistant_message', messageType, text })}\n\n`);
+          }
+        }
+        // Reset for next message
+        currentMessageHasToolUse = false;
+        hintSent = false;
+      } else if (message.type === 'system') {
+        // System messages (tool calls, etc) - send for activity indicator
+        res.write(`data: ${JSON.stringify({ type: 'system', subtype: (message as any).subtype, data: message })}\n\n`);
+      } else if (message.type === 'result') {
+        // Final result - prefer hook-detected checkpoint
+        const fullResponse = assistantMessages.join('\n\n---\n\n');
+        const hookCheckpoint = detectedCheckpoints.get(sessionId);
+        const parsedCheckpoint = parseCheckpoint(fullResponse);
+        const checkpoint = hookCheckpoint || parsedCheckpoint;
+
+        if (hookCheckpoint) detectedCheckpoints.delete(sessionId);
+
+        if (checkpoint) {
+          console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
+        }
+
+        res.write(`data: ${JSON.stringify({
+          type: 'complete',
+          sessionId,
+          response: assistantMessages[assistantMessages.length - 1] || '',
+          checkpoint,
+          awaitingInput: checkpoint !== null,
+          sessionStats: sessionManager.getSessionStats(sessionId),
+          pipeline: sessionManager.getPipelineStatus(sessionId),
+          instrumentation: instrumentor.getCampaignReport()
+        })}\n\n`);
+      }
+    }
+
+    res.end();
+  } catch (error: any) {
+    console.error('❌ Streaming continue error:', error.message);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+// TEST ENDPOINT: Simulate complete event with video checkpoint
+// Usage: POST http://localhost:3002/test/video-complete
+app.post('/test/video-complete', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const testSessionId = 'test-video-' + Date.now();
+
+  // Send session init
+  res.write(`data: ${JSON.stringify({ type: 'session_init', sessionId: testSessionId })}\n\n`);
+
+  // Send a text message first
+  setTimeout(() => {
+    res.write(`data: ${JSON.stringify({ type: 'text_delta', text: 'Testing video display...' })}\n\n`);
+  }, 100);
+
+  // Send assistant message
+  setTimeout(() => {
+    res.write(`data: ${JSON.stringify({ type: 'assistant_message', messageType: 'response', text: 'Testing video display...' })}\n\n`);
+  }, 200);
+
+  // Send complete event with video checkpoint
+  setTimeout(() => {
+    const completeEvent = {
+      type: 'complete',
+      sessionId: testSessionId,
+      response: 'Your fashion video is complete!',
+      checkpoint: {
+        stage: 'complete',
+        status: 'complete',
+        artifact: 'outputs/final/fashion-video.mp4',
+        message: 'Fashion video complete!'
+      },
+      awaitingInput: false,
+      sessionStats: null,
+      pipeline: null,
+      instrumentation: { campaignId: testSessionId, totalCost_usd: 0, totalDuration_ms: 0 }
+    };
+    console.log('[TEST] Sending complete event with checkpoint:', completeEvent.checkpoint);
+    res.write(`data: ${JSON.stringify(completeEvent)}\n\n`);
+    res.end();
+  }, 300);
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`
@@ -617,11 +786,13 @@ app.listen(PORT, () => {
 ║                                                ║
 ║  Endpoints:                                    ║
 ║  POST /generate                - Generate      ║
+║  POST /generate-stream         - Stream Gen   ║
 ║  GET  /sessions                - List sessions ║
 ║  GET  /sessions/:id            - Session info  ║
 ║  GET  /sessions/:id/pipeline   - Pipeline status║
 ║  GET  /sessions/:id/assets     - Get assets    ║
 ║  POST /sessions/:id/continue   - Continue      ║
+║  POST /sessions/:id/continue-stream - Stream   ║
 ║  GET  /health                  - Health check  ║
 ╠════════════════════════════════════════════════╣
 ║  Environment:                                  ║

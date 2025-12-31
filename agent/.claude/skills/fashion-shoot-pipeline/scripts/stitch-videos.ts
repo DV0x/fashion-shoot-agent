@@ -265,7 +265,12 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
       .complexFilter(filterComplex)
       .outputOptions([
         "-map", "[vout]",
-        "-filter_complex_threads", "1"  // Required for custom expressions with state variables
+        "-filter_complex_threads", "1",  // Required for custom expressions with state variables
+        "-c:v", "libx264",         // Use H.264 codec
+        "-profile:v", "high",      // High profile (browser-compatible)
+        "-pix_fmt", "yuv420p",     // YUV 4:2:0 (required for browser playback)
+        "-crf", "18",              // High quality
+        "-movflags", "+faststart"  // Move moov atom to beginning for web streaming
       ])
       .output(outputPath)
       .on("start", (cmdline) => {
