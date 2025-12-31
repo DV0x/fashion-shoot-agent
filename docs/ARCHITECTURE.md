@@ -278,6 +278,81 @@ See `agent/.claude/skills/fashion-shoot-pipeline/docs/GRID-CROPPING.md` for deta
 
 ---
 
+## Checkpoint Detection (PostToolUse Hooks)
+
+Checkpoints are detected programmatically using SDK PostToolUse hooks, providing 100% reliable detection compared to parsing LLM text output.
+
+### How It Works
+
+```
+Agent runs Bash tool (e.g., generate-image.ts)
+       │
+       ▼
+PostToolUse hook fires after tool completion
+       │
+       ▼
+detectCheckpoint() checks tool output for artifact patterns
+       │
+       ▼
+If match found → emit 'checkpoint' event
+       │
+       ├──► Stored in detectedCheckpoints Map
+       └──► Sent to frontend via SSE immediately
+```
+
+### Detection Rules
+
+| Checkpoint | Trigger Condition |
+|------------|-------------------|
+| `hero` | Bash command contains `generate-image.ts` AND output contains `outputs/hero.png` |
+| `frames` | Bash command contains `crop-frames.ts` AND output contains `frame-6.png` |
+| `complete` | Bash command contains `stitch-videos.ts` AND output contains `fashion-video.mp4` |
+
+### Implementation
+
+**ai-client.ts:**
+```typescript
+// PostToolUse hook for checkpoint detection
+function createCheckpointHooks(sessionId: string) {
+  return {
+    PostToolUse: [{
+      hooks: [async (input, _toolUseId, _options) => {
+        const checkpoint = detectCheckpoint(
+          input.tool_name,
+          input.tool_input,
+          input.tool_response
+        );
+        if (checkpoint) {
+          checkpointEmitter.emit('checkpoint', { sessionId, checkpoint });
+        }
+        return { continue: true };
+      }]
+    }]
+  };
+}
+```
+
+**sdk-server.ts:**
+```typescript
+// Listen for checkpoint events
+checkpointEmitter.on('checkpoint', ({ sessionId, checkpoint }) => {
+  detectedCheckpoints.set(sessionId, checkpoint);
+  // Broadcast to SSE connections immediately
+  broadcastToSSE(sessionId, { type: 'checkpoint', checkpoint });
+});
+```
+
+### Why Hooks Over Text Parsing?
+
+| Approach | Reliability | Reason |
+|----------|-------------|--------|
+| Text parsing (`---CHECKPOINT---`) | ~70% | LLM output is non-deterministic |
+| PostToolUse hooks | 100% | Triggers on actual tool output |
+
+The server still supports text parsing as a fallback, but hook-detected checkpoints take priority.
+
+---
+
 ## Cost Tracking
 
 The `SDKInstrumentor` tracks:

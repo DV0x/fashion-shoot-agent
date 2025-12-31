@@ -2,8 +2,96 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { resolve } from 'path';
 import { readFileSync, existsSync } from 'fs';
+import { EventEmitter } from 'events';
 import { SessionManager } from './session-manager.js';
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator-prompt.js';
+
+// Checkpoint data structure
+export interface CheckpointData {
+  stage: 'hero' | 'frames' | 'videos' | 'complete';
+  status: 'complete' | 'error';
+  artifact?: string;
+  artifacts?: string[];
+  message: string;
+}
+
+// Checkpoint event emitter for real-time notifications
+export const checkpointEmitter = new EventEmitter();
+
+/**
+ * Detect checkpoint based on tool output
+ * Triggers when specific artifacts are created
+ */
+function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): CheckpointData | null {
+  // Only check Bash tool results
+  if (toolName !== 'Bash') return null;
+
+  const output = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
+  const command = toolInput?.command || '';
+
+  // Detect hero.png creation (from generate-image.ts)
+  if (command.includes('generate-image.ts') && output.includes('outputs/hero.png')) {
+    return {
+      stage: 'hero',
+      status: 'complete',
+      artifact: 'outputs/hero.png',
+      message: 'Hero image ready. Reply "continue" or describe changes.'
+    };
+  }
+
+  // Detect frames creation (from crop-frames.ts)
+  if (command.includes('crop-frames.ts') && output.includes('frame-6.png')) {
+    return {
+      stage: 'frames',
+      status: 'complete',
+      artifacts: [
+        'outputs/frames/frame-1.png',
+        'outputs/frames/frame-2.png',
+        'outputs/frames/frame-3.png',
+        'outputs/frames/frame-4.png',
+        'outputs/frames/frame-5.png',
+        'outputs/frames/frame-6.png'
+      ],
+      message: '6 frames ready. Reply "continue" or request modifications.'
+    };
+  }
+
+  // Detect final video creation (from stitch-videos.ts)
+  if (command.includes('stitch-videos.ts') && output.includes('fashion-video.mp4')) {
+    return {
+      stage: 'complete',
+      status: 'complete',
+      artifact: 'outputs/final/fashion-video.mp4',
+      message: 'Fashion video complete!'
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Create PostToolUse hooks for checkpoint detection
+ */
+function createCheckpointHooks(sessionId: string) {
+  return {
+    PostToolUse: [{
+      hooks: [async (input: any, _toolUseId: string | undefined, _options: { signal: AbortSignal }) => {
+        const checkpoint = detectCheckpoint(
+          input.tool_name,
+          input.tool_input,
+          input.tool_response
+        );
+
+        if (checkpoint) {
+          console.log(`⏸️  CHECKPOINT DETECTED: ${checkpoint.stage} - ${checkpoint.message}`);
+          checkpointEmitter.emit('checkpoint', { sessionId, checkpoint });
+        }
+
+        return { continue: true };
+      }]
+    }]
+  };
+}
 
 // Image content block for multimodal input
 interface ImageContentBlock {
@@ -150,7 +238,8 @@ export class AIClient {
       ...this.defaultOptions,
       ...resumeOptions,
       includePartialMessages: true,  // Enable real-time token streaming
-      abortController
+      abortController,
+      hooks: createCheckpointHooks(session.id)
     };
 
     console.log(`🔄 Query with session ${session.id}`, {

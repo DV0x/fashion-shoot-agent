@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
-import { aiClient, sessionManager } from './lib/ai-client.js';
+import { aiClient, sessionManager, checkpointEmitter, type CheckpointData } from './lib/ai-client.js';
 import { SDKInstrumentor } from './lib/instrumentor.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,19 +50,30 @@ const upload = multer({
 // Store active SSE connections for streaming
 const sseConnections = new Map<string, express.Response[]>();
 
-/**
- * Checkpoint data structure parsed from agent response
- */
-interface CheckpointData {
-  stage: 'hero' | 'frames';
-  status: string;
-  artifact?: string;
-  artifacts?: string[];
-  message: string;
-}
+// Store detected checkpoints per session (from PostToolUse hooks)
+const detectedCheckpoints = new Map<string, CheckpointData>();
+
+// Listen for checkpoint events from PostToolUse hooks
+checkpointEmitter.on('checkpoint', ({ sessionId, checkpoint }: { sessionId: string; checkpoint: CheckpointData }) => {
+  console.log(`📍 Checkpoint event received for session ${sessionId}: ${checkpoint.stage}`);
+  detectedCheckpoints.set(sessionId, checkpoint);
+
+  // Send to all SSE connections for this session
+  const connections = sseConnections.get(sessionId);
+  if (connections) {
+    for (const res of connections) {
+      res.write(`data: ${JSON.stringify({
+        type: 'checkpoint',
+        sessionId,
+        checkpoint,
+        awaitingInput: true
+      })}\n\n`);
+    }
+  }
+});
 
 /**
- * Parse checkpoint marker from agent response
+ * Parse checkpoint marker from agent response (fallback method)
  * Returns null if no checkpoint found
  */
 function parseCheckpoint(responseText: string): CheckpointData | null {
@@ -93,8 +104,8 @@ function parseCheckpoint(responseText: string): CheckpointData | null {
   }
 
   return {
-    stage: data.stage as 'hero' | 'frames',
-    status: data.status || 'complete',
+    stage: data.stage as CheckpointData['stage'],
+    status: (data.status || 'complete') as CheckpointData['status'],
     artifact: data.artifact,
     artifacts,
     message: data.message || ''
@@ -353,12 +364,16 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
 
     const fullResponse = assistantMessages.join('\n\n---\n\n');
 
-    // Parse checkpoint from response
-    const checkpoint = parseCheckpoint(fullResponse);
+    // Get checkpoint: prefer hook-detected, fallback to parsing response
+    const hookCheckpoint = detectedCheckpoints.get(campaignSessionId);
+    const parsedCheckpoint = parseCheckpoint(fullResponse);
+    const checkpoint = hookCheckpoint || parsedCheckpoint;
     const awaitingInput = checkpoint !== null;
 
     if (checkpoint) {
       console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
+      // Clear hook checkpoint after use
+      if (hookCheckpoint) detectedCheckpoints.delete(campaignSessionId);
     }
 
     let sessionStats, campaignReport, pipelineStatus;
@@ -490,9 +505,13 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
         // System messages (tool calls, etc)
         res.write(`data: ${JSON.stringify({ type: 'system', subtype: (message as any).subtype, data: message })}\n\n`);
       } else if (message.type === 'result') {
-        // Final result
+        // Final result - prefer hook-detected checkpoint
         const fullResponse = assistantMessages.join('\n\n---\n\n');
-        const checkpoint = parseCheckpoint(fullResponse);
+        const hookCheckpoint = detectedCheckpoints.get(campaignSessionId);
+        const parsedCheckpoint = parseCheckpoint(fullResponse);
+        const checkpoint = hookCheckpoint || parsedCheckpoint;
+
+        if (hookCheckpoint) detectedCheckpoints.delete(campaignSessionId);
 
         res.write(`data: ${JSON.stringify({
           type: 'complete',
@@ -554,12 +573,15 @@ app.post('/sessions/:id/continue', async (req, res) => {
 
     const fullResponse = assistantMessages.join('\n\n---\n\n');
 
-    // Parse checkpoint from response
-    const checkpoint = parseCheckpoint(fullResponse);
+    // Get checkpoint: prefer hook-detected, fallback to parsing response
+    const hookCheckpoint = detectedCheckpoints.get(sessionId);
+    const parsedCheckpoint = parseCheckpoint(fullResponse);
+    const checkpoint = hookCheckpoint || parsedCheckpoint;
     const awaitingInput = checkpoint !== null;
 
     if (checkpoint) {
       console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
+      if (hookCheckpoint) detectedCheckpoints.delete(sessionId);
     }
 
     const sessionStats = sessionManager.getSessionStats(sessionId);
