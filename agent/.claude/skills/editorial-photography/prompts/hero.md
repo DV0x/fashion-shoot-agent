@@ -61,7 +61,7 @@ The image is shot on fuji velvia film on a 55mm prime lens with a hard flash, th
 After filling template, use `fashion-shoot-pipeline` skill:
 
 ```bash
-npx tsx scripts/generate-image.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts \
   --prompt "<FILLED_HERO_PROMPT>" \
   --input ref1.jpg --input ref2.jpg \
   --output outputs/hero.png \

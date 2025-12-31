@@ -41,7 +41,7 @@ mkdir -p outputs/frames outputs/videos outputs/final
 Generate images via FAL.ai nano-banana-pro.
 
 ```bash
-npx tsx scripts/generate-image.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts \
   --prompt "<PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
   --input ref1.jpg --input ref2.jpg \
   --output output.png \
@@ -68,12 +68,11 @@ npx tsx scripts/generate-image.ts \
 Crop contact sheet into individual frames (LOCAL - no API).
 
 ```bash
-npx tsx scripts/crop-frames.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts \
   --input outputs/contact-sheet.png \
   --output-dir outputs/frames/ \
   --rows 2 \
-  --cols 3 \
-  --auto-detect
+  --cols 3
 ```
 
 | Option | Required | Default | Description |
@@ -82,13 +81,12 @@ npx tsx scripts/crop-frames.ts \
 | `--output-dir` | Yes | - | Output directory for frames |
 | `--rows` | No | 2 | Grid rows |
 | `--cols` | No | 3 | Grid columns |
-| `--auto-detect` | No | false | **Recommended** - Auto-detect gutter sizes |
-| `--gutter-x` | No | 0 | Manual horizontal gap pixels |
-| `--gutter-y` | No | 0 | Manual vertical gap pixels |
+| `--gutter-x` | No | auto | Horizontal gap pixels (auto-detected if not specified) |
+| `--gutter-y` | No | auto | Vertical gap pixels (auto-detected if not specified) |
 
 **Output:** `frame-1.png` through `frame-6.png`
 
-**Important:** Always use `--auto-detect` flag. FAL.ai generates varying gutter sizes.
+**Note:** The script auto-detects gutter sizes using edge detection. Manual values can be provided if needed.
 
 **Errors:**
 - `Input not found` → Check contact-sheet.png exists
@@ -101,7 +99,7 @@ npx tsx scripts/crop-frames.ts \
 Generate videos via FAL.ai Kling 2.6 Pro.
 
 ```bash
-npx tsx scripts/generate-video.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
   --prompt "<VIDEO_PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
   --output outputs/videos/video-1.mp4 \
@@ -127,7 +125,7 @@ npx tsx scripts/generate-video.ts \
 Stitch videos with FFmpeg transitions (LOCAL - no API).
 
 ```bash
-npx tsx scripts/stitch-videos.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts \
   --clips outputs/videos/video-1.mp4 \
   --clips outputs/videos/video-2.mp4 \
   --clips outputs/videos/video-3.mp4 \

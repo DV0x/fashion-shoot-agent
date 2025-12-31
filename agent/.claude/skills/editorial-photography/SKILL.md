@@ -24,15 +24,15 @@ Match user's vibe to presets:
 | colorful, vibrant, bold colors | `editorial-drama` | `color-gel` |
 | *(no preference stated)* | `confident-standing` | `studio-grey` |
 
-**Full preset snippets:** `presets/options.md`
+**Full preset snippets:** `.claude/skills/editorial-photography/presets/options.md`
 
 ## Available Prompts
 
 | Prompt | Location | Use For |
 |--------|----------|---------|
-| HERO_PROMPT | `prompts/hero.md` | Full-body hero shot |
-| CONTACT_SHEET_PROMPT | `prompts/contact-sheet.md` | 2×3 grid of 6 camera angles |
-| VIDEO_PROMPTS (×6) | `prompts/video.md` | Camera movement per frame |
+| HERO_PROMPT | `.claude/skills/editorial-photography/prompts/hero.md` | Full-body hero shot |
+| CONTACT_SHEET_PROMPT | `.claude/skills/editorial-photography/prompts/contact-sheet.md` | 2×3 grid of 6 camera angles |
+| VIDEO_PROMPTS (×6) | `.claude/skills/editorial-photography/prompts/video.md` | Camera movement per frame |
 
 ## The 6 Camera Angles (FIXED)
 
@@ -71,7 +71,7 @@ After selecting presets and filling prompt templates:
 
 ## Rules
 
-- ✅ Read `presets/options.md` for exact preset snippets
+- ✅ Read `.claude/skills/editorial-photography/presets/options.md` for exact preset snippets
 - ✅ Fill `{POSE_PRESET_SNIPPET}` and `{BACKGROUND_PRESET_SNIPPET}` in templates
 - ✅ Fill `{STYLE_DETAILS}` based on glasses presence
 - ✅ Chain to `fashion-shoot-pipeline` skill after getting prompts

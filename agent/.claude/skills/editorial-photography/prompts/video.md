@@ -69,14 +69,14 @@ For each frame, use `fashion-shoot-pipeline` skill:
 
 ```bash
 # Frame 1
-npx tsx scripts/generate-video.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
   --prompt "Camera pushes in toward the subject's face, maintaining eye contact. Micro-movements in expression. The lighting remains consistent throughout." \
   --output outputs/videos/video-1.mp4 \
   --duration 5
 
 # Frame 2
-npx tsx scripts/generate-video.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-2.png \
   --prompt "Camera performs an orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is smooth and elegant." \
   --output outputs/videos/video-2.mp4 \
@@ -90,7 +90,7 @@ npx tsx scripts/generate-video.ts \
 After all 6 videos are generated:
 
 ```bash
-npx tsx scripts/stitch-videos.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts \
   --clips outputs/videos/video-1.mp4 \
   --clips outputs/videos/video-2.mp4 \
   --clips outputs/videos/video-3.mp4 \

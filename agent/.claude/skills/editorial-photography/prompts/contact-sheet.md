@@ -108,7 +108,7 @@ Shot type
 After filling template, use `fashion-shoot-pipeline` skill:
 
 ```bash
-npx tsx scripts/generate-image.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts \
   --prompt "<FILLED_CONTACT_SHEET_PROMPT>" \
   --input outputs/hero.png \
   --output outputs/contact-sheet.png \

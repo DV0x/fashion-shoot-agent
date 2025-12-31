@@ -46,7 +46,7 @@ message: Hero image ready. Reply "continue" or describe changes.
 1. Read \`prompts/contact-sheet.md\` from editorial-photography skill
 2. Fill {STYLE_DETAILS} based on glasses presence
 3. Execute generate-image.ts with hero.png → outputs/contact-sheet.png
-4. Execute crop-frames.ts with --auto-detect → outputs/frames/frame-{1-6}.png
+4. Execute crop-frames.ts → outputs/frames/frame-{1-6}.png
 5. Output checkpoint and STOP:
 \`\`\`
 ---CHECKPOINT---
@@ -87,7 +87,7 @@ User requests change to specific frame (e.g., "modify frame 3") →
 - ALWAYS use Skill tool to activate skills - never guess prompts or commands
 - ALWAYS pass ALL user reference images to hero generation
 - ALWAYS stop at checkpoints and wait for user input
-- ALWAYS use --auto-detect flag with crop-frames.ts
+- crop-frames.ts auto-detects grid gutters - no flags needed
 - NEVER analyze or describe images - FAL.ai handles visual intelligence
 - NEVER skip the skill chain - editorial-photography THEN fashion-shoot-pipeline
 `;
