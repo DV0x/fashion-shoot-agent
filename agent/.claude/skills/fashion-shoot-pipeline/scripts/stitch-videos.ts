@@ -96,8 +96,15 @@ interface StitchOptions {
   speed?: number; // Playback speed multiplier (1.5 = 50% faster)
 }
 
-// Get video duration using ffprobe
-function getVideoDuration(filePath: string): Promise<number> {
+// Video metadata from ffprobe
+interface VideoMetadata {
+  duration: number;
+  width: number;
+  height: number;
+}
+
+// Get video metadata (duration + dimensions) using ffprobe
+function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
@@ -109,7 +116,19 @@ function getVideoDuration(filePath: string): Promise<number> {
         reject(new Error(`Could not determine duration for ${filePath}`));
         return;
       }
-      resolve(duration);
+
+      // Find video stream for dimensions
+      const videoStream = metadata.streams.find(s => s.codec_type === "video");
+      if (!videoStream || !videoStream.width || !videoStream.height) {
+        reject(new Error(`Could not determine dimensions for ${filePath}`));
+        return;
+      }
+
+      resolve({
+        duration,
+        width: videoStream.width,
+        height: videoStream.height,
+      });
     });
   });
 }
@@ -140,12 +159,15 @@ function buildCustomExpr(easing: EasingType, transition: TransitionType): string
 }
 
 // Build xfade filter chain for multiple clips using custom expressions
+// Now includes scaling step to normalize all videos to same dimensions
 function buildFilterComplex(
   clipCount: number,
   clipDurations: number[],
   transitionDuration: number,
   transitionType: TransitionType,
   easing: EasingType,
+  targetWidth: number,
+  targetHeight: number,
   speed?: number
 ): string {
   if (clipCount < 2) {
@@ -158,17 +180,27 @@ function buildFilterComplex(
 
   const filters: string[] = [];
 
-  // Apply speed adjustment to each clip if specified
+  // Step 1: Scale all clips to target dimensions
+  // Uses scale + pad to handle different aspect ratios (adds black bars if needed)
+  for (let i = 0; i < clipCount; i++) {
+    filters.push(
+      `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,` +
+      `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black,` +
+      `setsar=1[scaled${i}]`
+    );
+  }
+
+  // Step 2: Apply speed adjustment if specified
   const speedInputs: string[] = [];
   if (speed && speed !== 1) {
     const ptsFactor = (1 / speed).toFixed(6);
     for (let i = 0; i < clipCount; i++) {
-      filters.push(`[${i}:v]setpts=${ptsFactor}*PTS[s${i}]`);
+      filters.push(`[scaled${i}]setpts=${ptsFactor}*PTS[s${i}]`);
       speedInputs.push(`s${i}`);
     }
   } else {
     for (let i = 0; i < clipCount; i++) {
-      speedInputs.push(`${i}:v`);
+      speedInputs.push(`scaled${i}`);
     }
   }
 
@@ -177,6 +209,7 @@ function buildFilterComplex(
     ? clipDurations.map(d => d / speed)
     : clipDurations;
 
+  // Step 3: Build xfade chain
   let lastOutput = `[${speedInputs[0]}]`;
   let accumulatedDuration = adjustedDurations[0];
 
@@ -222,17 +255,32 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     console.error(`Speed: ${speed}x (${((speed - 1) * 100).toFixed(0)}% faster)`);
   }
 
-  // Get durations for all clips
+  // Get metadata (duration + dimensions) for all clips
+  console.error("Probing clip metadata...");
+  const clipMetadata = await Promise.all(clips.map(getVideoMetadata));
+
+  // Get durations
   let clipDurations: number[];
   if (clipDuration) {
     console.error(`Using fixed clip duration: ${clipDuration}s`);
     clipDurations = clips.map(() => clipDuration);
   } else {
-    console.error("Probing clip durations...");
-    clipDurations = await Promise.all(clips.map(getVideoDuration));
-    clipDurations.forEach((d, i) => {
-      console.error(`  ${path.basename(clips[i])}: ${d.toFixed(2)}s`);
+    clipDurations = clipMetadata.map(m => m.duration);
+    clipMetadata.forEach((m, i) => {
+      console.error(`  ${path.basename(clips[i])}: ${m.duration.toFixed(2)}s (${m.width}x${m.height})`);
     });
+  }
+
+  // Calculate target dimensions (use max width/height to avoid cropping)
+  const targetWidth = Math.max(...clipMetadata.map(m => m.width));
+  const targetHeight = Math.max(...clipMetadata.map(m => m.height));
+
+  // Check if scaling is needed
+  const needsScaling = clipMetadata.some(
+    m => m.width !== targetWidth || m.height !== targetHeight
+  );
+  if (needsScaling) {
+    console.error(`Normalizing all clips to ${targetWidth}x${targetHeight}`);
   }
 
   const minDuration = Math.min(...clipDurations);
@@ -248,6 +296,8 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     transitionDuration,
     transitionType,
     easing,
+    targetWidth,
+    targetHeight,
     speed
   );
 

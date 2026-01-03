@@ -309,6 +309,14 @@ Contact Sheet → Canny Edges → Projection Profiles → Find Peaks → Crop Un
 
 See `agent/.claude/skills/fashion-shoot-pipeline/docs/GRID-CROPPING.md` for detailed documentation.
 
+#### resize-frames.ts - In-Place Updates
+
+Supports resizing frames to different aspect ratios (9:16, 16:9, 1:1, etc.). Uses temp file + atomic rename for in-place updates when input/output directories match—works in sandboxed containers.
+
+#### stitch-videos.ts - Auto-Scaling
+
+Automatically normalizes all input videos to the same dimensions before applying xfade transitions. Handles resolution mismatches when individual frames are regenerated (e.g., user edits frame-6). Uses `scale` + `pad` filters to avoid cropping.
+
 ---
 
 ## Checkpoint Detection (PostToolUse Hooks)
