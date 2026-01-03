@@ -144,7 +144,8 @@ fashion-shoot-agent/
                           │                   │
                      [User Review]       [User Review]
                      ├── Modify          ├── Modify frame
-                     └── Continue        └── Continue
+                     └── Continue        ├── Resize (aspect ratio)
+                                         └── Continue
 ```
 
 **The 6 Camera Angles (Fixed):**
@@ -347,7 +348,10 @@ If match found → emit 'checkpoint' event
 |------------|-------------------|
 | `hero` | Bash command contains `generate-image.ts` AND output contains `outputs/hero.png` |
 | `frames` | Bash command contains `crop-frames.ts` AND output contains `frame-6.png` |
+| `frames` | Bash command contains `resize-frames.ts` AND output contains `"success": true` |
 | `complete` | Bash command contains `stitch-videos.ts` AND output contains `fashion-video.mp4` |
+
+**Note:** The `frames` checkpoint triggers from both `crop-frames.ts` (initial creation) and `resize-frames.ts` (aspect ratio change). This ensures users can approve resized frames before video generation.
 
 ### Implementation
 
