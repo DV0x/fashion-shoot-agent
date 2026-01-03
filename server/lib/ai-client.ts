@@ -56,6 +56,27 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
     };
   }
 
+  // Detect frames resize (from resize-frames.ts)
+  if (command.includes('resize-frames.ts') && output.includes('"success": true')) {
+    // Extract aspect ratio from command if possible
+    const aspectMatch = command.match(/--aspect-ratio\s+(\S+)/);
+    const aspectRatio = aspectMatch ? aspectMatch[1] : 'new aspect ratio';
+
+    return {
+      stage: 'frames',
+      status: 'complete',
+      artifacts: [
+        'outputs/frames/frame-1.png',
+        'outputs/frames/frame-2.png',
+        'outputs/frames/frame-3.png',
+        'outputs/frames/frame-4.png',
+        'outputs/frames/frame-5.png',
+        'outputs/frames/frame-6.png'
+      ],
+      message: `Frames resized to ${aspectRatio}. Reply "continue" to generate videos or request changes.`
+    };
+  }
+
   // Detect final video creation (from stitch-videos.ts)
   if (command.includes('stitch-videos.ts') && output.includes('fashion-video.mp4')) {
     return {

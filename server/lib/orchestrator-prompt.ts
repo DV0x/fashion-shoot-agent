@@ -70,11 +70,28 @@ User requests change → Re-activate editorial-photography skill, select new pre
 → Show CHECKPOINT 1 again. Loop until user says "continue".
 
 ### At Checkpoint 2 (Frames)
-User requests change to specific frame (e.g., "modify frame 3") →
+
+**Frame modification** (e.g., "modify frame 3"):
 - Input: the specific frame file
 - Prompt: "Take this image and {USER_REQUEST}. Maintain fuji velvia style."
 - Output: same frame path (overwrites)
-→ Show CHECKPOINT 2 again. Loop until user says "continue".
+→ Read and display modified frame, show CHECKPOINT 2 again.
+
+**Aspect ratio change** (e.g., "resize to 9:16", "make portrait", "change aspect ratio"):
+1. Execute resize-frames.ts: \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts --input-dir outputs/frames --aspect-ratio {RATIO}\`
+   - Supported ratios: 16:9, 9:16, 4:3, 3:4, 1:1, 3:2, 2:3
+2. Read and display ALL 6 resized frames to user
+3. Output checkpoint and STOP - do NOT proceed to video generation until user approves:
+\`\`\`
+---CHECKPOINT---
+stage: frames
+status: complete
+artifacts: outputs/frames/frame-1.png,...,outputs/frames/frame-6.png
+message: Frames resized to {RATIO}. Reply "continue" to generate videos or request changes.
+---END CHECKPOINT---
+\`\`\`
+
+Loop until user says "continue".
 
 ## ERROR RECOVERY
 
