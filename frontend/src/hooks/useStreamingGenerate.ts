@@ -165,37 +165,61 @@ export function useStreamingGenerate() {
 
   // Helper: Add image/video messages from checkpoint artifacts
   const addArtifactMessages = useCallback((checkpoint: Checkpoint) => {
+    console.log('[ARTIFACT DEBUG] addArtifactMessages called with:', JSON.stringify(checkpoint, null, 2));
+
+    // Cache-busting timestamp to force browser to fetch updated images
+    const cacheBuster = `?t=${Date.now()}`;
+
     // Single artifact (hero image or final video)
     if (checkpoint.artifact) {
       const artifactPath = checkpoint.artifact;
       const isVideo = artifactPath.endsWith('.mp4');
+      console.log(`[ARTIFACT DEBUG] Single artifact: ${artifactPath}, isVideo: ${isVideo}`);
 
       if (isVideo) {
+        console.log(`[ARTIFACT DEBUG] Adding VIDEO message: /${artifactPath}${cacheBuster}`);
         addMessage({
           role: 'assistant',
           type: 'video',
-          src: `/${artifactPath}`,
+          src: `/${artifactPath}${cacheBuster}`,
         });
       } else {
+        console.log(`[ARTIFACT DEBUG] Adding IMAGE message: /${artifactPath}${cacheBuster}`);
         addMessage({
           role: 'assistant',
           type: 'image',
-          src: `/${artifactPath}`,
+          src: `/${artifactPath}${cacheBuster}`,
           caption: checkpoint.stage === 'hero' ? 'Hero Image' : undefined,
         });
       }
+    } else {
+      console.log('[ARTIFACT DEBUG] No single artifact');
     }
 
-    // Multiple artifacts (frames)
+    // Multiple artifacts (frames or clips)
     if (checkpoint.artifacts && checkpoint.artifacts.length > 0) {
+      console.log(`[ARTIFACT DEBUG] Multiple artifacts: ${checkpoint.artifacts.length} items`);
       checkpoint.artifacts.forEach((artifact, idx) => {
-        addMessage({
-          role: 'assistant',
-          type: 'image',
-          src: `/${artifact}`,
-          caption: `Frame ${idx + 1}`,
-        });
+        const isVideo = artifact.endsWith('.mp4');
+        console.log(`[ARTIFACT DEBUG] Artifact ${idx + 1}: ${artifact}, isVideo: ${isVideo}`);
+
+        if (isVideo) {
+          addMessage({
+            role: 'assistant',
+            type: 'video',
+            src: `/${artifact}${cacheBuster}`,
+          });
+        } else {
+          addMessage({
+            role: 'assistant',
+            type: 'image',
+            src: `/${artifact}${cacheBuster}`,
+            caption: `Frame ${idx + 1}`,
+          });
+        }
       });
+    } else {
+      console.log('[ARTIFACT DEBUG] No multiple artifacts');
     }
   }, [addMessage]);
 
@@ -270,9 +294,7 @@ export function useStreamingGenerate() {
         break;
 
       case 'assistant_message': {
-        // Full message received - confirms type and prepares for next message
-        const messageType = data.messageType as 'thinking' | 'response' | undefined;
-
+        // Full message received - prepares for next message
         // Create a new streaming message for the next turn
         const newStreamingId = crypto.randomUUID();
         const newMessage: ChatMessage = {
@@ -326,7 +348,9 @@ export function useStreamingGenerate() {
       case 'checkpoint': {
         // Checkpoint detected via hook (sent immediately)
         const checkpoint = data.checkpoint as Checkpoint;
+        console.log('[SSE DEBUG] Received checkpoint event:', JSON.stringify(checkpoint, null, 2));
         if (checkpoint) {
+          console.log('[SSE DEBUG] Adding artifact messages for checkpoint:', checkpoint.stage);
           // Add artifact images/videos first
           addArtifactMessages(checkpoint);
           // Then add checkpoint message
@@ -343,8 +367,15 @@ export function useStreamingGenerate() {
         // Generation complete
         const checkpoint = data.checkpoint as Checkpoint | undefined;
 
+        console.log('[SSE DEBUG] Received complete event');
+        console.log('[SSE DEBUG] Complete event checkpoint:', checkpoint ? JSON.stringify(checkpoint, null, 2) : 'null');
+        console.log('[SSE DEBUG] Full complete event data:', JSON.stringify(data, null, 2));
+
         // Add artifact messages if checkpoint has artifacts
         if (checkpoint) {
+          console.log('[SSE DEBUG] Adding artifact messages from complete event:', checkpoint.stage);
+          console.log('[SSE DEBUG] Artifact:', checkpoint.artifact);
+          console.log('[SSE DEBUG] Artifacts:', checkpoint.artifacts);
           addArtifactMessages(checkpoint);
           // Add checkpoint message
           addMessage({
@@ -352,6 +383,8 @@ export function useStreamingGenerate() {
             type: 'checkpoint',
             checkpoint,
           });
+        } else {
+          console.log('[SSE DEBUG] No checkpoint in complete event');
         }
 
         setState((prev) => {
@@ -428,6 +461,43 @@ export function useStreamingGenerate() {
 
         try {
           const response = await fetch('/api/test/video-complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          const reader = response.body?.getReader();
+          if (reader) {
+            await processSSEStream(reader, handleStreamEvent);
+          }
+        } catch (error) {
+          console.error('[TEST] Error:', error);
+          setState((prev) => ({ ...prev, isGenerating: false, activity: null }));
+        }
+        return;
+      }
+
+      // TEST COMMAND: Type "/test-clips" to test clips checkpoint UI
+      if (prompt.trim() === '/test-clips') {
+        console.log('[TEST] Running clips checkpoint test...');
+        addMessage({ role: 'user', type: 'text', content: prompt });
+
+        // Create placeholder for streaming assistant message
+        const assistantMessage = addMessage({
+          role: 'assistant',
+          type: 'text',
+          content: '',
+          isStreaming: true,
+        });
+        streamingMessageIdRef.current = assistantMessage.id;
+        accumulatedTextRef.current = '';
+
+        setState((prev) => ({
+          ...prev,
+          isGenerating: true,
+          activity: 'Testing clips checkpoint...',
+        }));
+
+        try {
+          const response = await fetch('/api/test/clips-checkpoint', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
           });

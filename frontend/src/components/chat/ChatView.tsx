@@ -13,7 +13,7 @@ interface ChatViewProps {
   messages: ChatMessage[];
   isGenerating: boolean;
   activity?: string | null;
-  onContinue?: () => void;
+  onContinue?: (options?: string) => void;
 }
 
 // Group consecutive image messages for grid display
@@ -61,6 +61,10 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
   // Group consecutive images for grid display
   const messageGroups = useMemo(() => groupMessages(messages), [messages]);
 
+  // DEBUG: Log messages and groups
+  console.log('[CHATVIEW DEBUG] Messages:', messages.map(m => ({ id: m.id, type: m.type })));
+  console.log('[CHATVIEW DEBUG] Message groups:', messageGroups.map(g => g.type === 'image-grid' ? { type: 'image-grid', count: g.images.length } : { type: 'single', messageType: g.message.type }));
+
   const renderMessage = (message: ChatMessage) => {
     switch (message.type) {
       case 'text':
@@ -80,7 +84,7 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
     }
   };
 
-  const renderGroup = (group: MessageGroup, index: number) => {
+  const renderGroup = (group: MessageGroup) => {
     if (group.type === 'image-grid') {
       return (
         <motion.div
@@ -129,7 +133,7 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
 
         {/* Messages - grouped for image grid display */}
         <AnimatePresence initial={false}>
-          {messageGroups.map((group, index) => renderGroup(group, index))}
+          {messageGroups.map((group) => renderGroup(group))}
         </AnimatePresence>
 
         {/* Thinking/Activity indicator with 3-dot animation */}

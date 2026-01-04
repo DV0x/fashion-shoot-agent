@@ -137,15 +137,16 @@ fashion-shoot-agent/
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   ANALYZE   │────▶│    HERO     │────▶│   FRAMES    │────▶│   VIDEOS    │────▶│   STITCH    │
-│  Reference  │     │ CHECKPOINT 1│     │ CHECKPOINT 2│     │   (auto)    │     │   (auto)    │
+│   ANALYZE   │────▶│    HERO     │────▶│   FRAMES    │────▶│   CLIPS     │────▶│   STITCH    │
+│  Reference  │     │ CHECKPOINT 1│     │ CHECKPOINT 2│     │ CHECKPOINT 3│     │   (auto)    │
 │   images    │     │  2K, 3:2    │     │  6 × 1K     │     │  6 × 5sec   │     │   ~24sec    │
-└─────────────┘     └──────┬──────┘     └──────┬──────┘     └─────────────┘     └─────────────┘
-                          │                   │
-                     [User Review]       [User Review]
-                     ├── Modify          ├── Modify frame
-                     └── Continue        ├── Resize (aspect ratio)
-                                         └── Continue
+└─────────────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └─────────────┘
+                          │                   │                   │
+                     [User Review]       [User Review]       [User Review]
+                     ├── Modify          ├── Modify frame    ├── Regenerate clip
+                     └── Continue        ├── Resize ratio    ├── Choose speed
+                                         └── Continue        ├── Enable loop
+                                                             └── Continue
 ```
 
 **The 6 Camera Angles (Fixed):**
@@ -154,8 +155,8 @@ fashion-shoot-agent/
 │  1. Beauty      │  2. High-Angle  │  3. Low-Angle   │
 │     Portrait    │     3/4 View    │     Full Body   │
 ├─────────────────┼─────────────────┼─────────────────┤
-│  4. Side-On     │  5. Intimate    │  6. Extreme     │
-│     Profile     │     Close       │     Detail      │
+│  4. Side-On     │  5. Worm's Eye  │  6. Extreme     │
+│     Profile     │     Shoe Frame  │     Detail      │
 └─────────────────┴─────────────────┴─────────────────┘
 ```
 
@@ -291,24 +292,30 @@ Executes generation scripts:
 | `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
 | `stitch-videos.ts` | FFmpeg xfade | Combine with transitions |
 
-#### crop-frames.ts - Hybrid Grid Detection
+#### crop-frames.ts - Adaptive Grid Detection
 
-Auto-detects grid structure from contact sheets without manual configuration:
+Auto-detects grid structure from contact sheets and calculates per-cell boundaries directly from detected gutter positions. Adapts to non-uniform AI-generated layouts.
 
 ```
-Contact Sheet → Canny Edges → Projection Profiles → Find Peaks → Crop Uniform Cells
+Contact Sheet → Canny Edges → Projection Profiles → Find Gutter Centers → Per-Cell Boundaries
 ```
 
 **Algorithm:**
 1. **Edge Detection** - Canny algorithm finds boundaries in the image
 2. **Projection Profiles** - Sum edge pixels along columns/rows
-3. **Peak Detection** - High values indicate gutter line positions
-4. **Grid Calculation** - Derive cell size, gutter width, and margins from peaks
-5. **Uniform Cropping** - Extract each frame with identical dimensions
+3. **Peak Detection** - High values indicate gutter line center positions
+4. **Gutter Width Estimation** - Calculate from spacing between consecutive gutter centers
+5. **Per-Cell Boundary Calculation** - Each cell's boundaries derived directly from gutter positions:
+   ```
+   Cell 0: leftEdge + margin  →  gutterCenter[0] - gutterWidth/2 - margin
+   Cell 1: gutterCenter[0] + gutterWidth/2 + margin  →  gutterCenter[1] - gutterWidth/2 - margin
+   Cell N: gutterCenter[N-1] + gutterWidth/2 + margin  →  rightEdge - margin
+   ```
+6. **Safety Margin** - 15% of gutter width applied to stay inside cell content
 
-**Why hybrid?** Sending images to AI for cropping costs ~$1/run. Reading 7MB images consumes excessive tokens. This approach uses pure math - zero AI tokens, works with any contact sheet layout.
+**Why per-cell boundaries?** AI-generated contact sheets are non-deterministic—gutter widths, cell sizes, and margins can vary. The old uniform spacing formula (`x = offset + col * (cellWidth + gutter)`) failed when grids weren't perfectly uniform. Per-cell boundaries adapt to each specific image.
 
-See `agent/.claude/skills/fashion-shoot-pipeline/docs/GRID-CROPPING.md` for detailed documentation.
+**Why hybrid detection?** Sending images to AI for cropping costs ~$1/run. Reading 7MB images consumes excessive tokens. This approach uses pure math—zero AI tokens, works with any contact sheet layout.
 
 #### resize-frames.ts - In-Place Updates
 
@@ -347,11 +354,15 @@ If match found → emit 'checkpoint' event
 | Checkpoint | Trigger Condition |
 |------------|-------------------|
 | `hero` | Bash command contains `generate-image.ts` AND output contains `outputs/hero.png` |
+| `frames` | Bash command contains `generate-image.ts` AND output contains `outputs/frames/frame-` |
 | `frames` | Bash command contains `crop-frames.ts` AND output contains `frame-6.png` |
 | `frames` | Bash command contains `resize-frames.ts` AND output contains `"success": true` |
+| `clips` | Bash command contains `generate-video.ts` AND output contains `video-6.mp4` |
 | `complete` | Bash command contains `stitch-videos.ts` AND output contains `fashion-video.mp4` |
 
-**Note:** The `frames` checkpoint triggers from both `crop-frames.ts` (initial creation) and `resize-frames.ts` (aspect ratio change). This ensures users can approve resized frames before video generation.
+**Notes:**
+- The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual frame regeneration). This ensures users can approve modified frames before video generation.
+- The `clips` checkpoint triggers after all 6 video clips are generated, allowing users to review clips, choose playback speed, enable loop, or regenerate specific clips before stitching.
 
 ### Implementation
 

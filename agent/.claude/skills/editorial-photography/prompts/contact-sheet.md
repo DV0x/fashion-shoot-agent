@@ -43,10 +43,12 @@ This elongates the silhouette, emphasizes footwear, and creates a dramatic persp
 Camera placed far to one side of the subject, using a tighter focal length to compress space.
 The subject appears in clean profile or near-profile, showcasing garment structure in a flattened, editorial manner.
 
-5. Intimate Close Portrait From an Unexpected Height
+5. Wide-Angle Worm's Eye Shoe Frame
 
-Camera positioned very close to the subject's face (or upper torso) but slightly above or below eye level.
-The angle should feel fashion-editorial, not conventional — offset, elegant, and expressive.
+Camera positioned extremely low (worm's eye view), wide-angle lens capturing the subject standing with one foot extended forward.
+The extended foot is angled slightly to the side to highlight shoe detailing, texture, and construction.
+This frame emphasizes footwear as a key fashion element while maintaining the full environment and styling context.
+Include any visible hand jewelry (rings, bracelets) in frame if the pose allows.
 
 6. Extreme Detail Frame From a Non-Intuitive Angle
 
@@ -70,9 +72,7 @@ All keyframes must be the exact same aspect ratio, and exactly 6 keyframes shoul
 Output Format
 A) 2×3 Contact Sheet Image (Mandatory)
 
-Include all 6 frames, each labeled with:
-Frame number
-Shot type
+Do not add any text labels, frame numbers, or overlays on the contact sheet. output a perfect contact sheet.
 ```
 
 ## Style Details Placeholder
@@ -98,8 +98,8 @@ Shot type
 ├───────────────┼───────────────┼───────────────┤
 │  Frame 4      │  Frame 5      │  Frame 6      │
 │  R2C1         │  R2C2         │  R2C3         │
-│  Side-On      │  Intimate     │  Extreme      │
-│  Profile      │  Close        │  Detail       │
+│  Side-On      │  Worm's Eye   │  Extreme      │
+│  Profile      │  Shoe Frame   │  Detail       │
 └───────────────┴───────────────┴───────────────┘
 ```
 

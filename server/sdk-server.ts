@@ -55,11 +55,19 @@ const detectedCheckpoints = new Map<string, CheckpointData>();
 
 // Listen for checkpoint events from PostToolUse hooks
 checkpointEmitter.on('checkpoint', ({ sessionId, checkpoint }: { sessionId: string; checkpoint: CheckpointData }) => {
-  console.log(`📍 Checkpoint event received for session ${sessionId}: ${checkpoint.stage}`);
+  console.log(`📍 [EMITTER DEBUG] Checkpoint event received:`);
+  console.log(`   Session ID: ${sessionId}`);
+  console.log(`   Stage: ${checkpoint.stage}`);
+  console.log(`   Artifact: ${checkpoint.artifact || 'none'}`);
+  console.log(`   Artifacts: ${checkpoint.artifacts?.join(', ') || 'none'}`);
+
   detectedCheckpoints.set(sessionId, checkpoint);
+  console.log(`📍 [EMITTER DEBUG] Stored in detectedCheckpoints map. Current map size: ${detectedCheckpoints.size}`);
 
   // Send to all SSE connections for this session
   const connections = sseConnections.get(sessionId);
+  console.log(`📍 [EMITTER DEBUG] SSE connections for session: ${connections?.length || 0}`);
+
   if (connections) {
     for (const res of connections) {
       res.write(`data: ${JSON.stringify({
@@ -532,9 +540,17 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
         const parsedCheckpoint = parseCheckpoint(fullResponse);
         const checkpoint = hookCheckpoint || parsedCheckpoint;
 
+        // DEBUG: Log checkpoint retrieval
+        console.log(`📤 [COMPLETE DEBUG] Building complete event for session: ${campaignSessionId}`);
+        console.log(`   hookCheckpoint: ${hookCheckpoint ? JSON.stringify(hookCheckpoint) : 'null'}`);
+        console.log(`   parsedCheckpoint: ${parsedCheckpoint ? JSON.stringify(parsedCheckpoint) : 'null'}`);
+        console.log(`   final checkpoint: ${checkpoint ? JSON.stringify(checkpoint) : 'null'}`);
+        console.log(`   detectedCheckpoints map size: ${detectedCheckpoints.size}`);
+        console.log(`   detectedCheckpoints keys: ${Array.from(detectedCheckpoints.keys()).join(', ')}`);
+
         if (hookCheckpoint) detectedCheckpoints.delete(campaignSessionId);
 
-        res.write(`data: ${JSON.stringify({
+        const completeEvent = {
           type: 'complete',
           sessionId: campaignSessionId,
           outputDir,
@@ -544,7 +560,10 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
           sessionStats: sessionManager.getSessionStats(campaignSessionId),
           pipeline: sessionManager.getPipelineStatus(campaignSessionId),
           instrumentation: instrumentor.getCampaignReport()
-        })}\n\n`);
+        };
+
+        console.log(`📤 [COMPLETE DEBUG] Sending complete event with checkpoint stage: ${checkpoint?.stage || 'none'}`);
+        res.write(`data: ${JSON.stringify(completeEvent)}\n\n`);
       }
     }
 
@@ -703,13 +722,21 @@ app.post('/sessions/:id/continue-stream', async (req, res) => {
         const parsedCheckpoint = parseCheckpoint(fullResponse);
         const checkpoint = hookCheckpoint || parsedCheckpoint;
 
+        // DEBUG: Log checkpoint retrieval (continue-stream)
+        console.log(`📤 [CONTINUE COMPLETE DEBUG] Building complete event for session: ${sessionId}`);
+        console.log(`   hookCheckpoint: ${hookCheckpoint ? JSON.stringify(hookCheckpoint) : 'null'}`);
+        console.log(`   parsedCheckpoint: ${parsedCheckpoint ? JSON.stringify(parsedCheckpoint) : 'null'}`);
+        console.log(`   final checkpoint: ${checkpoint ? JSON.stringify(checkpoint) : 'null'}`);
+        console.log(`   detectedCheckpoints map size: ${detectedCheckpoints.size}`);
+        console.log(`   detectedCheckpoints keys: ${Array.from(detectedCheckpoints.keys()).join(', ')}`);
+
         if (hookCheckpoint) detectedCheckpoints.delete(sessionId);
 
         if (checkpoint) {
           console.log(`⏸️  CHECKPOINT: ${checkpoint.stage} - ${checkpoint.message}`);
         }
 
-        res.write(`data: ${JSON.stringify({
+        const completeEvent = {
           type: 'complete',
           sessionId,
           response: assistantMessages[assistantMessages.length - 1] || '',
@@ -718,7 +745,10 @@ app.post('/sessions/:id/continue-stream', async (req, res) => {
           sessionStats: sessionManager.getSessionStats(sessionId),
           pipeline: sessionManager.getPipelineStatus(sessionId),
           instrumentation: instrumentor.getCampaignReport()
-        })}\n\n`);
+        };
+
+        console.log(`📤 [CONTINUE COMPLETE DEBUG] Sending complete event with checkpoint stage: ${checkpoint?.stage || 'none'}`);
+        res.write(`data: ${JSON.stringify(completeEvent)}\n\n`);
       }
     }
 
@@ -728,6 +758,68 @@ app.post('/sessions/:id/continue-stream', async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
     res.end();
   }
+});
+
+// TEST ENDPOINT: Simulate clips checkpoint with 6 videos
+// Usage: POST http://localhost:3002/test/clips-checkpoint
+// Frontend: Type "/test-clips" in the chat input
+app.post('/test/clips-checkpoint', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const testSessionId = 'test-clips-' + Date.now();
+
+  // Send session init
+  res.write(`data: ${JSON.stringify({ type: 'session_init', sessionId: testSessionId })}\n\n`);
+
+  // Send a text message first
+  setTimeout(() => {
+    res.write(`data: ${JSON.stringify({ type: 'text_delta', text: 'Testing clips checkpoint...' })}\n\n`);
+  }, 100);
+
+  // Send assistant message
+  setTimeout(() => {
+    res.write(`data: ${JSON.stringify({ type: 'assistant_message', messageType: 'response', text: 'Testing clips checkpoint...' })}\n\n`);
+  }, 200);
+
+  // Send clips checkpoint event
+  setTimeout(() => {
+    const checkpointEvent = {
+      type: 'checkpoint',
+      checkpoint: {
+        stage: 'clips',
+        status: 'complete',
+        artifacts: [
+          'outputs/videos/video-1.mp4',
+          'outputs/videos/video-2.mp4',
+          'outputs/videos/video-3.mp4',
+          'outputs/videos/video-4.mp4',
+          'outputs/videos/video-5.mp4',
+          'outputs/videos/video-6.mp4'
+        ],
+        message: '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.'
+      }
+    };
+    console.log('[TEST] Sending clips checkpoint:', checkpointEvent.checkpoint);
+    res.write(`data: ${JSON.stringify(checkpointEvent)}\n\n`);
+  }, 300);
+
+  // Send complete event
+  setTimeout(() => {
+    const completeEvent = {
+      type: 'complete',
+      sessionId: testSessionId,
+      response: 'Clips ready for review!',
+      awaitingInput: true,
+      sessionStats: null,
+      pipeline: null,
+      instrumentation: { campaignId: testSessionId, totalCost_usd: 0, totalDuration_ms: 0 }
+    };
+    res.write(`data: ${JSON.stringify(completeEvent)}\n\n`);
+    res.end();
+  }, 400);
 });
 
 // TEST ENDPOINT: Simulate complete event with video checkpoint

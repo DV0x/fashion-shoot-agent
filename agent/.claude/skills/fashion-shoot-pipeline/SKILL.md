@@ -24,8 +24,9 @@ Execute the generation pipeline using FAL.ai and FFmpeg.
 1. generate-image.ts (HERO)      → outputs/hero.png
 2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png
 3. crop-frames.ts                → outputs/frames/frame-{1-6}.png
-4. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
-5. stitch-videos.ts              → outputs/final/fashion-video.mp4
+4. resize-frames.ts (OPTIONAL)   → outputs/frames/frame-{1-6}.png (resized)
+5. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
+6. stitch-videos.ts              → outputs/final/fashion-video.mp4
 ```
 
 ## Directory Setup (Run First)
@@ -91,6 +92,37 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts \
 **Errors:**
 - `Input not found` → Check contact-sheet.png exists
 - `Invalid dimensions` → Try manual gutter values
+
+---
+
+## Script: resize-frames.ts (Optional)
+
+Resize/crop frames to a target aspect ratio (LOCAL - no API). Use when user requests 16:9, 9:16, or other aspect ratios.
+
+```bash
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts \
+  --input-dir outputs/frames/ \
+  --output-dir outputs/frames/ \
+  --aspect-ratio 16:9
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--input-dir` | Yes | - | Directory containing frame images |
+| `--output-dir` | No | input-dir | Output directory (overwrites if same) |
+| `--aspect-ratio` | Yes | - | Target ratio: 16:9, 9:16, 4:3, 3:4, 1:1, 3:2, 2:3 |
+| `--format` | No | png | Output format: png, jpeg, webp |
+
+**Common Aspect Ratios:**
+- `16:9` - Landscape (YouTube, desktop)
+- `9:16` - Portrait (TikTok, Reels, Stories)
+- `1:1` - Square (Instagram)
+
+**Behavior:** Crops from center to maintain subject focus.
+
+**Errors:**
+- `Input directory not found` → Check frames directory exists
+- `No image files found` → Check frame-{1-6}.png exist
 
 ---
 

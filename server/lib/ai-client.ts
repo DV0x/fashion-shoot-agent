@@ -8,7 +8,7 @@ import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator-prompt.js';
 
 // Checkpoint data structure
 export interface CheckpointData {
-  stage: 'hero' | 'frames' | 'videos' | 'complete';
+  stage: 'hero' | 'frames' | 'clips' | 'complete';
   status: 'complete' | 'error';
   artifact?: string;
   artifacts?: string[];
@@ -29,6 +29,11 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
   const output = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
   const command = toolInput?.command || '';
 
+  // DEBUG: Log all Bash tool executions for checkpoint detection
+  console.log(`🔍 [CHECKPOINT DEBUG] Checking Bash command:`);
+  console.log(`   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}`);
+  console.log(`   Output preview: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
+
   // Detect hero.png creation (from generate-image.ts)
   if (command.includes('generate-image.ts') && output.includes('outputs/hero.png')) {
     return {
@@ -36,6 +41,35 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
       status: 'complete',
       artifact: 'outputs/hero.png',
       message: 'Hero image ready. Reply "continue" or describe changes.'
+    };
+  }
+
+  // Detect individual frame regeneration (from generate-image.ts to outputs/frames/)
+  // This triggers when user requests modifications to specific frames
+  if (command.includes('generate-image.ts') && output.includes('outputs/frames/frame-')) {
+    // Extract which frame(s) were regenerated from the output
+    const frameMatches = output.match(/outputs\/frames\/frame-(\d+)\.png/g);
+    const regeneratedFrames = frameMatches
+      ? [...new Set(frameMatches)].sort()  // Dedupe and sort
+      : [];
+
+    const frameNumbers = regeneratedFrames.map(f => f.match(/frame-(\d+)/)?.[1]).filter(Boolean);
+    const frameList = frameNumbers.length > 1
+      ? `Frames ${frameNumbers.join(', ')} regenerated.`
+      : `Frame ${frameNumbers[0]} regenerated.`;
+
+    return {
+      stage: 'frames',
+      status: 'complete',
+      artifacts: [
+        'outputs/frames/frame-1.png',
+        'outputs/frames/frame-2.png',
+        'outputs/frames/frame-3.png',
+        'outputs/frames/frame-4.png',
+        'outputs/frames/frame-5.png',
+        'outputs/frames/frame-6.png'
+      ],
+      message: `${frameList} Reply "continue" or request more changes.`
     };
   }
 
@@ -77,8 +111,47 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
     };
   }
 
-  // Detect final video creation (from stitch-videos.ts)
-  if (command.includes('stitch-videos.ts') && output.includes('fashion-video.mp4')) {
+  // Detect clips creation (from generate-video.ts creating video-6.mp4 - the last clip)
+  if (command.includes('generate-video.ts') && output.includes('video-6.mp4')) {
+    return {
+      stage: 'clips',
+      status: 'complete',
+      artifacts: [
+        'outputs/videos/video-1.mp4',
+        'outputs/videos/video-2.mp4',
+        'outputs/videos/video-3.mp4',
+        'outputs/videos/video-4.mp4',
+        'outputs/videos/video-5.mp4',
+        'outputs/videos/video-6.mp4'
+      ],
+      message: '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.'
+    };
+  }
+
+  // Detect final video creation (from stitch-videos.ts OR raw ffmpeg)
+  // Raw ffmpeg fallback is needed when stitch-videos.ts fails due to resolution mismatches
+  const hasStitchScript = command.includes('stitch-videos.ts');
+  const hasFashionVideoInOutput = output.includes('fashion-video.mp4');
+  const hasFFmpeg = command.includes('ffmpeg');
+  const hasFashionVideoInCommand = command.includes('outputs/final/fashion-video.mp4');
+  const hasError = output.includes('Error');
+
+  // DEBUG: Log final video detection checks
+  console.log(`🔍 [CHECKPOINT DEBUG] Final video checks:`);
+  console.log(`   hasStitchScript: ${hasStitchScript}`);
+  console.log(`   hasFashionVideoInOutput: ${hasFashionVideoInOutput}`);
+  console.log(`   hasFFmpeg: ${hasFFmpeg}`);
+  console.log(`   hasFashionVideoInCommand: ${hasFashionVideoInCommand}`);
+  console.log(`   hasError: ${hasError}`);
+
+  const isFinalVideoCreated =
+    (hasStitchScript && hasFashionVideoInOutput) ||
+    (hasFFmpeg && hasFashionVideoInCommand && !hasError);
+
+  console.log(`   isFinalVideoCreated: ${isFinalVideoCreated}`);
+
+  if (isFinalVideoCreated) {
+    console.log(`✅ [CHECKPOINT DEBUG] COMPLETE checkpoint detected!`);
     return {
       stage: 'complete',
       status: 'complete',

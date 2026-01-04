@@ -57,11 +57,26 @@ message: 6 frames ready. Reply "continue" or request modifications.
 ---END CHECKPOINT---
 \`\`\`
 
-### Phase 4: Videos + Stitch (runs to completion)
+### Phase 4: Video Clips → CHECKPOINT 3
 1. Read \`prompts/video.md\` from editorial-photography skill (6 different prompts)
 2. Execute generate-video.ts for each frame (6 times, sequentially)
-3. Execute stitch-videos.ts → outputs/final/fashion-video.mp4
-4. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
+3. Output checkpoint and STOP:
+\`\`\`
+---CHECKPOINT---
+stage: clips
+status: complete
+artifacts: outputs/videos/video-1.mp4,outputs/videos/video-2.mp4,outputs/videos/video-3.mp4,outputs/videos/video-4.mp4,outputs/videos/video-5.mp4,outputs/videos/video-6.mp4
+message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.
+---END CHECKPOINT---
+\`\`\`
+
+### Phase 5: Stitch Final Video
+1. Parse user's stitch preferences:
+   - **Speed**: 1x (default), 1.25x, 1.5x, 2x
+   - **Loop**: yes/no (default: no) - adds transition from clip 6 back to clip 1
+2. Execute stitch-videos.ts with user preferences:
+   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts --clips ... --speed {SPEED} [--loop]\`
+3. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
 
 ## CHECKPOINT MODIFICATION HANDLING
 
@@ -92,6 +107,19 @@ message: Frames resized to {RATIO}. Reply "continue" to generate videos or reque
 \`\`\`
 
 Loop until user says "continue".
+
+### At Checkpoint 3 (Clips)
+
+**Regenerate clip** (e.g., "regenerate clip 3", "redo video 5"):
+1. Re-read \`prompts/video.md\` for that specific frame's prompt
+2. Execute generate-video.ts for that frame only
+3. Show CHECKPOINT 3 again with all 6 clips
+
+**Speed/loop selection** (e.g., "1.5x speed", "loop", "1.25x with loop"):
+- Parse preferences and proceed to Phase 5 (Stitch)
+
+**Continue** (e.g., "continue", "stitch"):
+- Use defaults (1x speed, no loop) and proceed to Phase 5
 
 ## ERROR RECOVERY
 

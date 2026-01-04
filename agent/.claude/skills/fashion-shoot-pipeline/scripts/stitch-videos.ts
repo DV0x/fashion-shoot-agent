@@ -94,6 +94,7 @@ interface StitchOptions {
   easing?: EasingType;
   clipDuration?: number;
   speed?: number; // Playback speed multiplier (1.5 = 50% faster)
+  loop?: boolean; // Add first clip at end to create seamless loop (6→1 transition)
 }
 
 // Video metadata from ffprobe
@@ -232,22 +233,26 @@ function buildFilterComplex(
 // Stitch videos using FFmpeg with custom easing expressions
 async function stitchVideos(options: StitchOptions): Promise<string> {
   const {
-    clips,
+    clips: inputClips,
     outputPath,
     transitionDuration = 0.5,
     transitionType = "fade",
     easing = "cubic-out",
     clipDuration,
     speed,
+    loop = false,
   } = options;
 
-  if (clips.length < 2) {
+  // If loop enabled, append first clip to create seamless loop (6→1 transition)
+  const clips = loop ? [...inputClips, inputClips[0]] : inputClips;
+
+  if (inputClips.length < 2) {
     throw new Error("Need at least 2 clips to stitch");
   }
 
-  validateClips(clips);
+  validateClips(inputClips); // Only validate unique clips
 
-  console.error(`Stitching ${clips.length} video clips...`);
+  console.error(`Stitching ${inputClips.length} video clips${loop ? " (loop enabled → " + clips.length + " total)" : ""}...`);
   console.error(`Transition: ${transitionType}`);
   console.error(`Easing: ${easing}`);
   console.error(`Transition duration: ${transitionDuration}s`);
@@ -353,6 +358,7 @@ function parseArguments() {
       "transition-duration": { type: "string", short: "d" },
       "clip-duration": { type: "string" },
       speed: { type: "string", short: "s" },
+      loop: { type: "boolean", short: "l" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: false,
@@ -377,6 +383,7 @@ Options:
                            Options: ${easings}
   -d, --transition-duration  Transition duration in seconds (default: 0.5)
   -s, --speed              Playback speed multiplier (1.5 = 50% faster)
+  -l, --loop               Create seamless loop (adds transition from last clip back to first)
       --clip-duration      Fixed clip duration (auto-detected if not specified)
   -h, --help               Show this help message
 
@@ -472,6 +479,7 @@ Examples:
     transitionDuration,
     clipDuration,
     speed,
+    loop: values.loop ?? false,
   };
 }
 
@@ -488,6 +496,7 @@ async function main() {
       transitionDuration: args.transitionDuration,
       clipDuration: args.clipDuration,
       speed: args.speed,
+      loop: args.loop,
     });
 
     // Output result path to stdout (for pipeline integration)

@@ -1,0 +1,1 @@
+Use only bash tools to read images.

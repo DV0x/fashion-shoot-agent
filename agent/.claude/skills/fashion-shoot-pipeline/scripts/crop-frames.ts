@@ -28,15 +28,20 @@ import * as path from "path";
 import { parseArgs } from "util";
 
 // Types
+interface CellBoundary {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface GridInfo {
   rows: number;
   cols: number;
-  cellWidth: number;
-  cellHeight: number;
-  gutterX: number;
-  gutterY: number;
-  offsetX: number;
-  offsetY: number;
+  cells: CellBoundary[]; // Per-cell boundaries, indexed by frame number (row-major order)
+  // Kept for debugging/logging purposes
+  detectedGutterX: number;
+  detectedGutterY: number;
 }
 
 interface CropResult {
@@ -246,6 +251,7 @@ async function detectGrid(
 }
 
 // Analyze detected peaks to determine grid structure
+// Returns per-cell boundaries calculated directly from gutter center positions
 function analyzeGridStructure(
   verticalPeaks: number[],
   horizontalPeaks: number[],
@@ -261,7 +267,7 @@ function analyzeGridStructure(
   const edgeThresholdX = imageWidth * 0.05;
   const edgeThresholdY = imageHeight * 0.05;
 
-  // Find edge peaks
+  // Find edge peaks (outer content boundaries)
   const leftEdge = sortedVertical.find((p) => p < edgeThresholdX) ?? 0;
   const rightEdge =
     [...sortedVertical].reverse().find((p) => p > imageWidth - edgeThresholdX) ??
@@ -273,7 +279,7 @@ function analyzeGridStructure(
 
   console.error(`Edges - Left: ${leftEdge}, Right: ${rightEdge}, Top: ${topEdge}, Bottom: ${bottomEdge}`);
 
-  // Find internal gutters
+  // Find internal gutters (gutter line centers between cells)
   const innerVertical = sortedVertical.filter(
     (p) => p > edgeThresholdX && p < imageWidth - edgeThresholdX
   );
@@ -284,79 +290,166 @@ function analyzeGridStructure(
   console.error(`Inner vertical gutters: ${innerVertical.join(", ")}`);
   console.error(`Inner horizontal gutters: ${innerHorizontal.join(", ")}`);
 
-  // Select gutter positions
+  // Select the expected number of gutter center positions
   const expectedInternalVertical = expectedCols - 1;
   const expectedInternalHorizontal = expectedRows - 1;
 
-  const gutterXPositions =
+  const gutterXCenters =
     innerVertical.length >= expectedInternalVertical
       ? selectEvenlySpaced(innerVertical, expectedInternalVertical)
       : innerVertical;
 
-  const gutterYPositions =
+  const gutterYCenters =
     innerHorizontal.length >= expectedInternalHorizontal
       ? selectEvenlySpaced(innerHorizontal, expectedInternalHorizontal)
       : innerHorizontal;
 
-  console.error(`Selected vertical gutters: ${gutterXPositions.join(", ")}`);
-  console.error(`Selected horizontal gutters: ${gutterYPositions.join(", ")}`);
+  // Sort gutter centers
+  const sortedGutterX = [...gutterXCenters].sort((a, b) => a - b);
+  const sortedGutterY = [...gutterYCenters].sort((a, b) => a - b);
 
-  // Calculate gutter sizes
+  console.error(`Selected vertical gutter centers: ${sortedGutterX.join(", ")}`);
+  console.error(`Selected horizontal gutter centers: ${sortedGutterY.join(", ")}`);
+
+  // Estimate gutter width from spacing patterns
   let gutterWidth = 0;
   let gutterHeight = 0;
 
-  if (gutterXPositions.length > 0) {
-    const contentWidth = rightEdge - leftEdge;
-    const expectedCellWidth = contentWidth / expectedCols;
-    const firstCellEnd = gutterXPositions[0];
-    const firstCellWidth = firstCellEnd - leftEdge;
-    gutterWidth = Math.max(0, Math.round((expectedCellWidth - firstCellWidth) * 2));
+  if (sortedGutterX.length >= 2) {
+    // Calculate average spacing between consecutive gutter centers
+    let spacingSum = 0;
+    for (let i = 1; i < sortedGutterX.length; i++) {
+      spacingSum += sortedGutterX[i] - sortedGutterX[i - 1];
+    }
+    const avgInternalSpacing = spacingSum / (sortedGutterX.length - 1);
+    const totalContentWidth = rightEdge - leftEdge;
+    gutterWidth = Math.max(0, Math.round(expectedCols * avgInternalSpacing - totalContentWidth));
+    console.error(`Gutter X from spacing: avgSpacing=${avgInternalSpacing.toFixed(1)}, calculated=${gutterWidth}`);
+  } else if (sortedGutterX.length === 1) {
+    // Single gutter: estimate from position relative to edges
+    const leftSpacing = sortedGutterX[0] - leftEdge;
+    const rightSpacing = rightEdge - sortedGutterX[0];
+    // Gutter width ≈ difference between spacings (assuming equal cells)
+    gutterWidth = Math.max(10, Math.abs(leftSpacing - rightSpacing));
+    console.error(`Gutter X from single gutter: ${gutterWidth}`);
+  } else {
+    gutterWidth = Math.max(10, Math.round(leftEdge * 2));
+    console.error(`Gutter X fallback from margin: ${gutterWidth}`);
   }
 
-  if (gutterYPositions.length > 0) {
-    const contentHeight = bottomEdge - topEdge;
-    const expectedCellHeight = contentHeight / expectedRows;
-    const firstCellEnd = gutterYPositions[0];
-    const firstCellHeight = firstCellEnd - topEdge;
-    gutterHeight = Math.max(0, Math.round((expectedCellHeight - firstCellHeight) * 2));
-  }
-
-  // Fallback: estimate from margins
-  if (gutterWidth === 0) {
-    gutterWidth = Math.round(leftEdge * 2);
-  }
-  if (gutterHeight === 0) {
-    gutterHeight = Math.round(topEdge * 2);
+  if (sortedGutterY.length >= 2) {
+    let spacingSum = 0;
+    for (let i = 1; i < sortedGutterY.length; i++) {
+      spacingSum += sortedGutterY[i] - sortedGutterY[i - 1];
+    }
+    const avgInternalSpacing = spacingSum / (sortedGutterY.length - 1);
+    const totalContentHeight = bottomEdge - topEdge;
+    gutterHeight = Math.max(0, Math.round(expectedRows * avgInternalSpacing - totalContentHeight));
+    console.error(`Gutter Y from spacing: avgSpacing=${avgInternalSpacing.toFixed(1)}, calculated=${gutterHeight}`);
+  } else if (sortedGutterY.length === 1) {
+    const topSpacing = sortedGutterY[0] - topEdge;
+    const bottomSpacing = bottomEdge - sortedGutterY[0];
+    gutterHeight = Math.max(10, Math.abs(topSpacing - bottomSpacing));
+    console.error(`Gutter Y from single gutter: ${gutterHeight}`);
+  } else {
+    gutterHeight = Math.max(10, Math.round(topEdge * 2));
+    console.error(`Gutter Y fallback from margin: ${gutterHeight}`);
   }
 
   console.error(`Estimated gutter: ${gutterWidth}px wide, ${gutterHeight}px tall`);
 
-  // Calculate cell dimensions
-  const totalContentWidth = rightEdge - leftEdge;
-  const totalContentHeight = bottomEdge - topEdge;
+  // Safety margin: percentage of gutter to stay away from boundaries
+  const safetyMargin = 0.15; // 15% of gutter on each side
+  const marginX = Math.max(3, Math.round(gutterWidth * safetyMargin));
+  const marginY = Math.max(3, Math.round(gutterHeight * safetyMargin));
+  console.error(`Safety margin: ${marginX}px horizontal, ${marginY}px vertical`);
 
-  const cellWidth = Math.floor(
-    (totalContentWidth - gutterWidth * (expectedCols - 1)) / expectedCols
-  );
-  const cellHeight = Math.floor(
-    (totalContentHeight - gutterHeight * (expectedRows - 1)) / expectedRows
-  );
+  // Build column boundaries from gutter centers
+  // For column i: start = previous gutter right edge + margin, end = next gutter left edge - margin
+  const colBoundaries: { start: number; end: number }[] = [];
 
-  console.error(`Calculated cell size: ${cellWidth}×${cellHeight}`);
+  for (let col = 0; col < expectedCols; col++) {
+    let start: number;
+    let end: number;
+
+    if (col === 0) {
+      // First column: starts at left edge + margin
+      start = leftEdge + marginX;
+    } else {
+      // Starts after previous gutter: gutterCenter + gutterWidth/2 + margin
+      start = Math.round(sortedGutterX[col - 1] + gutterWidth / 2) + marginX;
+    }
+
+    if (col === expectedCols - 1) {
+      // Last column: ends at right edge - margin
+      end = rightEdge - marginX;
+    } else {
+      // Ends before next gutter: gutterCenter - gutterWidth/2 - margin
+      end = Math.round(sortedGutterX[col] - gutterWidth / 2) - marginX;
+    }
+
+    // Clamp to image bounds
+    start = Math.max(0, start);
+    end = Math.min(imageWidth, end);
+
+    colBoundaries.push({ start, end });
+    console.error(`Column ${col}: x=${start} to ${end} (width=${end - start})`);
+  }
+
+  // Build row boundaries from gutter centers
+  const rowBoundaries: { start: number; end: number }[] = [];
+
+  for (let row = 0; row < expectedRows; row++) {
+    let start: number;
+    let end: number;
+
+    if (row === 0) {
+      start = topEdge + marginY;
+    } else {
+      start = Math.round(sortedGutterY[row - 1] + gutterHeight / 2) + marginY;
+    }
+
+    if (row === expectedRows - 1) {
+      end = bottomEdge - marginY;
+    } else {
+      end = Math.round(sortedGutterY[row] - gutterHeight / 2) - marginY;
+    }
+
+    // Clamp to image bounds
+    start = Math.max(0, start);
+    end = Math.min(imageHeight, end);
+
+    rowBoundaries.push({ start, end });
+    console.error(`Row ${row}: y=${start} to ${end} (height=${end - start})`);
+  }
+
+  // Build per-cell boundaries (row-major order)
+  const cells: CellBoundary[] = [];
+
+  for (let row = 0; row < expectedRows; row++) {
+    for (let col = 0; col < expectedCols; col++) {
+      const x = colBoundaries[col].start;
+      const y = rowBoundaries[row].start;
+      const width = colBoundaries[col].end - colBoundaries[col].start;
+      const height = rowBoundaries[row].end - rowBoundaries[row].start;
+
+      cells.push({ x, y, width, height });
+
+      const frameNum = row * expectedCols + col + 1;
+      console.error(`Frame ${frameNum}: (${x}, ${y}) ${width}×${height}`);
+    }
+  }
 
   return {
     rows: expectedRows,
     cols: expectedCols,
-    cellWidth,
-    cellHeight,
-    gutterX: gutterWidth,
-    gutterY: gutterHeight,
-    offsetX: leftEdge,
-    offsetY: topEdge,
+    cells,
+    detectedGutterX: gutterWidth,
+    detectedGutterY: gutterHeight,
   };
 }
 
-// Crop frames using detected grid info
+// Crop frames using per-cell boundaries from grid info
 async function cropFrames(
   imagePath: string,
   grid: GridInfo,
@@ -370,24 +463,24 @@ async function cropFrames(
   }
 
   const results: CropResult[] = [];
-  let frameNumber = 1;
 
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
-      const x = grid.offsetX + col * (grid.cellWidth + grid.gutterX);
-      const y = grid.offsetY + row * (grid.cellHeight + grid.gutterY);
+      const frameIndex = row * grid.cols + col;
+      const frameNumber = frameIndex + 1;
+      const cell = grid.cells[frameIndex];
       const outputPath = path.join(outputDir, `${prefix}-${frameNumber}.${outputFormat}`);
 
       console.error(
-        `Cropping frame ${frameNumber} (row ${row}, col ${col}): x=${x}, y=${y}, ${grid.cellWidth}×${grid.cellHeight}`
+        `Cropping frame ${frameNumber} (row ${row}, col ${col}): x=${cell.x}, y=${cell.y}, ${cell.width}×${cell.height}`
       );
 
       await sharp(imagePath)
         .extract({
-          left: x,
-          top: y,
-          width: grid.cellWidth,
-          height: grid.cellHeight,
+          left: cell.x,
+          top: cell.y,
+          width: cell.width,
+          height: cell.height,
         })
         .toFormat(outputFormat)
         .toFile(outputPath);
@@ -397,14 +490,13 @@ async function cropFrames(
         row,
         col,
         outputPath,
-        x,
-        y,
-        width: grid.cellWidth,
-        height: grid.cellHeight,
+        x: cell.x,
+        y: cell.y,
+        width: cell.width,
+        height: cell.height,
       });
 
       console.error(`  Saved: ${outputPath}`);
-      frameNumber++;
     }
   }
 
@@ -524,9 +616,8 @@ async function main() {
     const grid = await detectGrid(args.inputPath, args.rows, args.cols);
 
     console.error("\nDetected grid parameters:");
-    console.error(`  Cell size: ${grid.cellWidth}×${grid.cellHeight}`);
-    console.error(`  Gutter: ${grid.gutterX}px horizontal, ${grid.gutterY}px vertical`);
-    console.error(`  Offset: ${grid.offsetX}px left, ${grid.offsetY}px top`);
+    console.error(`  Cells: ${grid.cells.length} (${grid.cols}×${grid.rows})`);
+    console.error(`  Detected gutter: ${grid.detectedGutterX}px horizontal, ${grid.detectedGutterY}px vertical`);
 
     // Crop frames
     console.error("\n--- Cropping Frames ---\n");
@@ -547,12 +638,10 @@ async function main() {
           success: true,
           framesCount: results.length,
           grid: {
-            cellWidth: grid.cellWidth,
-            cellHeight: grid.cellHeight,
-            gutterX: grid.gutterX,
-            gutterY: grid.gutterY,
-            offsetX: grid.offsetX,
-            offsetY: grid.offsetY,
+            rows: grid.rows,
+            cols: grid.cols,
+            detectedGutterX: grid.detectedGutterX,
+            detectedGutterY: grid.detectedGutterY,
           },
           frames: results.map((r) => ({
             frameNumber: r.frameNumber,

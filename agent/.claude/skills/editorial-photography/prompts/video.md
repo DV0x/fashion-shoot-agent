@@ -1,40 +1,40 @@
 # VIDEO_PROMPTS
 
-Camera movement prompts for each of the 6 frames. Each frame type has a specific movement style.
+Camera movement prompts for each of the 6 frames. Each frame type has a specific movement style designed to enhance the keyframe's cinematic qualities.
 
 ## Frame-to-Prompt Mapping
 
 | Frame | Type | Camera Movement | Prompt |
 |-------|------|-----------------|--------|
-| 1 | Beauty Portrait | Push In | See below |
-| 2 | High-Angle 3/4 | Orbital | See below |
-| 3 | Low-Angle Full | Rise Up | See below |
+| 1 | Beauty Portrait | Subtle Orbital Arc | See below |
+| 2 | High-Angle 3/4 | Descending Jib | See below |
+| 3 | Low-Angle Full | Low Oblique Push | See below |
 | 4 | Side-On Profile | Lateral Track | See below |
-| 5 | Intimate Close | Breath Movement | See below |
+| 5 | Worm's Eye Shoe | Low Drift | See below |
 | 6 | Extreme Detail | Macro Drift | See below |
 
 ---
 
-## VIDEO_PROMPT_1: Beauty Portrait → Push In
+## VIDEO_PROMPT_1: Beauty Portrait → Subtle Orbital Arc
 
 ```
-Camera pushes in toward the subject's face, maintaining eye contact. Micro-movements in expression. The lighting remains consistent throughout.
-```
-
----
-
-## VIDEO_PROMPT_2: High-Angle 3/4 → Orbital
-
-```
-Camera performs an orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is smooth and elegant.
+Slow orbital arc (5-10°) around the face, drifting slightly upward. Reveals cheekbone dimension while maintaining shallow depth of field. Subject's gaze holds steady with micro-expressions. The editorial offset angle and bone structure emphasis remain throughout.
 ```
 
 ---
 
-## VIDEO_PROMPT_3: Low-Angle Full → Rise Up
+## VIDEO_PROMPT_2: High-Angle 3/4 → Descending Jib
 
 ```
-Camera rises from the low angle, emphasizing the subject's height and presence. The silhouette remains powerful throughout the movement.
+Camera descends on a gentle arc while rotating 15° around subject. Starts overhead, settles toward 3/4 high angle. Reveals wardrobe geometry from multiple elevations. The shape abstraction quality transforms as perspective shifts. Movement is smooth and elegant.
+```
+
+---
+
+## VIDEO_PROMPT_3: Low-Angle Full → Low Oblique Push
+
+```
+Camera holds low to ground, pushing slowly along the oblique diagonal toward subject. The elongated silhouette looms larger as we approach. Footwear and full figure remain in frame. Perspective distortion intensifies subtly. The dramatic low angle is maintained throughout.
 ```
 
 ---
@@ -42,15 +42,15 @@ Camera rises from the low angle, emphasizing the subject's height and presence. 
 ## VIDEO_PROMPT_4: Side-On Profile → Lateral Track
 
 ```
-Camera performs a lateral tracking movement along the subject's profile, maintaining the compressed telephoto look. Movement is smooth and refined.
+Telephoto tracking shot sliding parallel to subject. Compressed background drifts opposite to camera direction. Subject in clean profile, garment structure flattens elegantly. The long lens compression creates a refined, editorial quality throughout.
 ```
 
 ---
 
-## VIDEO_PROMPT_5: Intimate Close → Breath Movement
+## VIDEO_PROMPT_5: Worm's Eye Shoe → Low Drift
 
 ```
-Extremely subtle movement suggesting the subject's natural breathing. Camera holds nearly still with micro-adjustments. Intimate and personal feeling.
+Low camera drifts forward toward extended foot from ground level. Wide-angle distortion emphasizes shoe construction, texture, and detailing. The worm's eye perspective creates fashion-forward abstraction. Movement is subtle—let the unusual angle carry the visual drama.
 ```
 
 ---
@@ -58,47 +58,6 @@ Extremely subtle movement suggesting the subject's natural breathing. Camera hol
 ## VIDEO_PROMPT_6: Extreme Detail → Macro Drift
 
 ```
-Camera performs a steady drift across the detail, revealing texture and craftsmanship. Movement is precise and refined.
+Steady drift across texture, accessory, or wardrobe detail from non-intuitive angle. Focus travels across surface, revealing material depth and craftsmanship. Movement speed is glacial—imperceptible start, visible mid-shot. Abstract and editorial.
 ```
 
----
-
-## Execution
-
-For each frame, use `fashion-shoot-pipeline` skill:
-
-```bash
-# Frame 1
-npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
-  --input outputs/frames/frame-1.png \
-  --prompt "Camera pushes in toward the subject's face, maintaining eye contact. Micro-movements in expression. The lighting remains consistent throughout." \
-  --output outputs/videos/video-1.mp4 \
-  --duration 5
-
-# Frame 2
-npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
-  --input outputs/frames/frame-2.png \
-  --prompt "Camera performs an orbital movement around the subject from the high angle, revealing different aspects of the wardrobe from above. Movement is smooth and elegant." \
-  --output outputs/videos/video-2.mp4 \
-  --duration 5
-
-# Continue for frames 3-6...
-```
-
-## Stitch Command
-
-After all 6 videos are generated:
-
-```bash
-npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts \
-  --clips outputs/videos/video-1.mp4 \
-  --clips outputs/videos/video-2.mp4 \
-  --clips outputs/videos/video-3.mp4 \
-  --clips outputs/videos/video-4.mp4 \
-  --clips outputs/videos/video-5.mp4 \
-  --clips outputs/videos/video-6.mp4 \
-  --output outputs/final/fashion-video.mp4 \
-  --transition fade \
-  --easing smooth \
-  --transition-duration 1.2
-```
