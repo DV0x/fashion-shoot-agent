@@ -131,6 +131,7 @@ export interface VideoMessage extends BaseMessage {
   type: 'video';
   src: string;
   poster?: string;
+  label?: string;  // e.g., "Clip 1", "Final Video"
 }
 
 export type ChatMessage =

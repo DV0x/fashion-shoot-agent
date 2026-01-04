@@ -359,10 +359,13 @@ If match found → emit 'checkpoint' event
 | `frames` | Bash command contains `resize-frames.ts` AND output contains `"success": true` |
 | `clips` | Bash command contains `generate-video.ts` AND output contains `video-6.mp4` |
 | `complete` | Bash command contains `stitch-videos.ts` AND output contains `fashion-video.mp4` |
+| `complete` | TaskOutput contains `fashion-video.mp4` AND `retrieval_status>success` (background task) |
 
 **Notes:**
-- The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual frame regeneration). This ensures users can approve modified frames before video generation.
+- The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). This ensures users can approve modified frames before video generation.
+- Multi-frame editing is supported: users can say "modify frames 2 and 3", "modify frames 1-4", or "modify all frames".
 - The `clips` checkpoint triggers after all 6 video clips are generated, allowing users to review clips, choose playback speed, enable loop, or regenerate specific clips before stitching.
+- The `complete` checkpoint also checks `TaskOutput` tool results for when stitch runs as a background task (timeout >2min).
 
 ### Implementation
 
@@ -447,7 +450,7 @@ Server                                    Frontend (useStreamingGenerate)
 | `text` | Normal assistant response | `TextMessage` |
 | `thinking` | Intermediate message with tool_use (collapsible) | `ThinkingMessage` |
 | `image` | Generated image artifact | `ImageMessage` / `ImageGrid` |
-| `video` | Generated video artifact | `VideoMessage` |
+| `video` | Generated video artifact | `VideoMessage` / `VideoGrid` |
 | `checkpoint` | Pipeline checkpoint with actions | `CheckpointMessage` |
 | `progress` | Progress indicator | `ProgressMessage` |
 
@@ -472,16 +475,26 @@ if (event?.type === 'content_block_start') {
 }
 ```
 
-### Image Grouping
+### Media Grouping (Images & Videos)
 
-Consecutive image messages (3+) are automatically grouped into a 2×3 grid:
+Consecutive image or video messages (3+) are automatically grouped into grids:
 
 ```typescript
 // ChatView.tsx - groupMessages()
 if (consecutiveImages.length >= 3) {
-  return { type: 'image-grid', images: consecutiveImages };
+  return { type: 'image-grid', images: consecutiveImages };  // → ImageGrid component
+}
+if (consecutiveVideos.length >= 3) {
+  return { type: 'video-grid', videos: consecutiveVideos };  // → VideoGrid component
 }
 ```
+
+**VideoGrid Features:**
+- 2×3 grid layout for 6 clips at Checkpoint 3
+- Hover to preview (auto-plays muted thumbnail)
+- Click to open lightbox with full playback controls
+- Keyboard navigation (arrows, space, ESC)
+- Individual clip download
 
 ---
 
@@ -561,10 +574,11 @@ PORT=3002                      # Optional
 | editorial-photography Skill | ✅ Complete | 7 poses, 7 backgrounds |
 | fashion-shoot-pipeline Skill | ✅ Complete | 4 scripts, browser-compatible video |
 | Frontend Streaming | ✅ Complete | SSE consumer, thinking/response separation |
-| Frontend Components | ✅ Complete | 12 components (chat, ui, layout) |
+| Frontend Components | ✅ Complete | 13 components (chat, ui, layout) |
 | Image Grid | ✅ Complete | Auto-grouping 3+ consecutive images |
+| Video Grid | ✅ Complete | Auto-grouping 3+ consecutive videos (clips) |
 | Video Playback | ✅ Complete | H.264 yuv420p encoding |
-| Checkpoint UI | ✅ Complete | Hero, frames, complete stages |
+| Checkpoint UI | ✅ Complete | Hero, frames, clips, complete stages |
 
 **Remaining:**
 - Preset selection UI (partial)

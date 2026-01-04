@@ -1,10 +1,11 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ChatMessage, ImageMessage as ImageMessageType } from '../../lib/types';
+import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType } from '../../lib/types';
 import { TextMessage } from './TextMessage';
 import { ThinkingMessage } from './ThinkingMessage';
 import { ImageMessage } from './ImageMessage';
 import { ImageGrid } from './ImageGrid';
+import { VideoGrid } from './VideoGrid';
 import { CheckpointMessage } from './CheckpointMessage';
 import { ProgressMessage } from './ProgressMessage';
 import { VideoMessage } from './VideoMessage';
@@ -16,14 +17,16 @@ interface ChatViewProps {
   onContinue?: (options?: string) => void;
 }
 
-// Group consecutive image messages for grid display
+// Group consecutive image/video messages for grid display
 type MessageGroup =
   | { type: 'single'; message: ChatMessage }
-  | { type: 'image-grid'; images: ImageMessageType[] };
+  | { type: 'image-grid'; images: ImageMessageType[] }
+  | { type: 'video-grid'; videos: VideoMessageType[] };
 
 function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let currentImageGroup: ImageMessageType[] = [];
+  let currentVideoGroup: VideoMessageType[] = [];
 
   const flushImageGroup = () => {
     if (currentImageGroup.length >= 3) {
@@ -38,15 +41,34 @@ function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     currentImageGroup = [];
   };
 
+  const flushVideoGroup = () => {
+    if (currentVideoGroup.length >= 3) {
+      // 3+ consecutive videos → show as grid
+      groups.push({ type: 'video-grid', videos: [...currentVideoGroup] });
+    } else {
+      // 1-2 videos → show individually
+      currentVideoGroup.forEach((vid) => {
+        groups.push({ type: 'single', message: vid });
+      });
+    }
+    currentVideoGroup = [];
+  };
+
   for (const message of messages) {
     if (message.type === 'image') {
+      flushVideoGroup(); // Flush any pending videos first
       currentImageGroup.push(message);
+    } else if (message.type === 'video') {
+      flushImageGroup(); // Flush any pending images first
+      currentVideoGroup.push(message);
     } else {
       flushImageGroup();
+      flushVideoGroup();
       groups.push({ type: 'single', message });
     }
   }
   flushImageGroup();
+  flushVideoGroup();
 
   return groups;
 }
@@ -63,7 +85,11 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
 
   // DEBUG: Log messages and groups
   console.log('[CHATVIEW DEBUG] Messages:', messages.map(m => ({ id: m.id, type: m.type })));
-  console.log('[CHATVIEW DEBUG] Message groups:', messageGroups.map(g => g.type === 'image-grid' ? { type: 'image-grid', count: g.images.length } : { type: 'single', messageType: g.message.type }));
+  console.log('[CHATVIEW DEBUG] Message groups:', messageGroups.map(g => {
+    if (g.type === 'image-grid') return { type: 'image-grid', count: g.images.length };
+    if (g.type === 'video-grid') return { type: 'video-grid', count: g.videos.length };
+    return { type: 'single', messageType: g.message.type };
+  }));
 
   const renderMessage = (message: ChatMessage) => {
     switch (message.type) {
@@ -88,13 +114,26 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
     if (group.type === 'image-grid') {
       return (
         <motion.div
-          key={`grid-${group.images[0].id}`}
+          key={`image-grid-${group.images[0].id}`}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
         >
           <ImageGrid images={group.images} />
+        </motion.div>
+      );
+    }
+    if (group.type === 'video-grid') {
+      return (
+        <motion.div
+          key={`video-grid-${group.videos[0].id}`}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.2 }}
+        >
+          <VideoGrid videos={group.videos} />
         </motion.div>
       );
     }

@@ -74,7 +74,11 @@ export function VideoMessage({ message }: VideoMessageProps) {
     e.stopPropagation();
     const link = document.createElement('a');
     link.href = message.src;
-    link.download = 'fashion-video.mp4';
+    // Use label for filename if available, otherwise default to fashion-video
+    const filename = message.label
+      ? `${message.label.toLowerCase().replace(/\s+/g, '-')}.mp4`
+      : 'fashion-video.mp4';
+    link.download = filename;
     link.click();
   };
 
@@ -135,7 +139,7 @@ export function VideoMessage({ message }: VideoMessageProps) {
           {/* Actions */}
           <div className="flex items-center justify-between mt-3 px-1">
             <span className="text-xs font-mono uppercase tracking-wider text-accent">
-              Final Video
+              {message.label || 'Final Video'}
             </span>
 
             <button
@@ -231,7 +235,7 @@ export function VideoMessage({ message }: VideoMessageProps) {
               <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent rounded-b-lg">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-mono uppercase tracking-wider text-accent">
-                    Final Video
+                    {message.label || 'Final Video'}
                   </span>
                   <button
                     onClick={handleDownload}

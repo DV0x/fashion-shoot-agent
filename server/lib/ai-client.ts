@@ -23,15 +23,20 @@ export const checkpointEmitter = new EventEmitter();
  * Triggers when specific artifacts are created
  */
 function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): CheckpointData | null {
-  // Only check Bash tool results
-  if (toolName !== 'Bash') return null;
+  // Check Bash tool results AND TaskOutput results (for background tasks)
+  if (toolName !== 'Bash' && toolName !== 'TaskOutput') return null;
 
   const output = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
-  const command = toolInput?.command || '';
 
-  // DEBUG: Log all Bash tool executions for checkpoint detection
-  console.log(`🔍 [CHECKPOINT DEBUG] Checking Bash command:`);
-  console.log(`   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}`);
+  // For TaskOutput, we don't have the original command, so check output directly
+  // For Bash, we have the command in toolInput
+  const command = toolName === 'Bash' ? (toolInput?.command || '') : '';
+
+  // DEBUG: Log tool executions for checkpoint detection
+  console.log(`🔍 [CHECKPOINT DEBUG] Checking ${toolName}:`);
+  if (command) {
+    console.log(`   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}`);
+  }
   console.log(`   Output preview: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
 
   // Detect hero.png creation (from generate-image.ts)
@@ -128,25 +133,32 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
     };
   }
 
-  // Detect final video creation (from stitch-videos.ts OR raw ffmpeg)
+  // Detect final video creation (from stitch-videos.ts OR raw ffmpeg OR TaskOutput from background task)
   // Raw ffmpeg fallback is needed when stitch-videos.ts fails due to resolution mismatches
+  // TaskOutput check handles when stitch runs as background task
   const hasStitchScript = command.includes('stitch-videos.ts');
   const hasFashionVideoInOutput = output.includes('fashion-video.mp4');
   const hasFFmpeg = command.includes('ffmpeg');
   const hasFashionVideoInCommand = command.includes('outputs/final/fashion-video.mp4');
   const hasError = output.includes('Error');
+  const isTaskOutput = toolName === 'TaskOutput';
+  const hasSuccessStatus = output.includes('retrieval_status>success') || output.includes('"success"');
 
   // DEBUG: Log final video detection checks
   console.log(`🔍 [CHECKPOINT DEBUG] Final video checks:`);
+  console.log(`   toolName: ${toolName}`);
   console.log(`   hasStitchScript: ${hasStitchScript}`);
   console.log(`   hasFashionVideoInOutput: ${hasFashionVideoInOutput}`);
   console.log(`   hasFFmpeg: ${hasFFmpeg}`);
   console.log(`   hasFashionVideoInCommand: ${hasFashionVideoInCommand}`);
   console.log(`   hasError: ${hasError}`);
+  console.log(`   isTaskOutput: ${isTaskOutput}`);
+  console.log(`   hasSuccessStatus: ${hasSuccessStatus}`);
 
   const isFinalVideoCreated =
     (hasStitchScript && hasFashionVideoInOutput) ||
-    (hasFFmpeg && hasFashionVideoInCommand && !hasError);
+    (hasFFmpeg && hasFashionVideoInCommand && !hasError) ||
+    (isTaskOutput && hasFashionVideoInOutput && hasSuccessStatus && !hasError);
 
   console.log(`   isFinalVideoCreated: ${isFinalVideoCreated}`);
 

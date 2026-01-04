@@ -86,11 +86,20 @@ User requests change → Re-activate editorial-photography skill, select new pre
 
 ### At Checkpoint 2 (Frames)
 
-**Frame modification** (e.g., "modify frame 3"):
+**Single frame modification** (e.g., "modify frame 3"):
 - Input: the specific frame file
 - Prompt: "Take this image and {USER_REQUEST}. Maintain fuji velvia style."
 - Output: same frame path (overwrites)
-→ Read and display modified frame, show CHECKPOINT 2 again.
+→ Show CHECKPOINT 2 again with all 6 frames for review.
+
+**Multiple frame modification** (e.g., "modify frames 2 and 3", "modify frames 2, 4, 6", "modify frames 1-3"):
+- Parse frame numbers from user request (supports: "2 and 3", "2, 4, 6", "1-3", "all")
+- For EACH frame, execute generate-image.ts sequentially:
+  - Input: that specific frame file
+  - Prompt: "Take this image and {USER_REQUEST}. Maintain fuji velvia style."
+  - Output: same frame path (overwrites)
+- After ALL frames are modified, show CHECKPOINT 2 again with all 6 frames for review.
+- Do NOT proceed until user approves.
 
 **Aspect ratio change** (e.g., "resize to 9:16", "make portrait", "change aspect ratio"):
 1. Execute resize-frames.ts: \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts --input-dir outputs/frames --aspect-ratio {RATIO}\`
