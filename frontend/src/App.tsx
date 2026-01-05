@@ -27,7 +27,7 @@ function App() {
 
     // Check if it's an aspect ratio (contains ":")
     if (options.includes(':')) {
-      continueSession(`Resize all frames to ${options} aspect ratio using resize-frames.ts, then continue with video generation.`);
+      continueSession(`Resize all frames to ${options} aspect ratio using resize-frames.ts.`);
       return;
     }
 
