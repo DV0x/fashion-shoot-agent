@@ -349,20 +349,24 @@ If match found → emit 'checkpoint' event
        └──► Sent to frontend via SSE immediately
 ```
 
-### Detection Rules
+### Detection Rules (Order Matters)
 
-| Checkpoint | Trigger Condition |
-|------------|-------------------|
-| `hero` | Bash command contains `generate-image.ts` AND output contains `outputs/hero.png` |
-| `frames` | Bash command contains `generate-image.ts` AND output contains `outputs/frames/frame-` |
-| `frames` | Bash command contains `crop-frames.ts` AND output contains `frame-6.png` |
-| `frames` | Bash command contains `resize-frames.ts` AND output contains `"success": true` |
-| `clips` | Bash command contains `generate-video.ts` AND output contains `video-6.mp4` |
-| `complete` | Bash command contains `stitch-videos.ts` AND output contains `fashion-video.mp4` |
-| `complete` | TaskOutput contains `fashion-video.mp4` AND `retrieval_status>success` (background task) |
+Detection is checked in this order—first match wins:
+
+| Order | Checkpoint | Trigger Condition |
+|-------|------------|-------------------|
+| 1 | `hero` | Bash contains `generate-image.ts` AND output contains `outputs/hero.png` |
+| 2 | `frames` | Bash contains `generate-image.ts` AND output contains `outputs/frames/frame-` |
+| 3 | `frames` | Bash contains `crop-frames.ts` AND output contains `frame-6.png` |
+| 4 | `frames` | Bash contains `resize-frames.ts` AND output contains `"success": true` |
+| 5 | `complete` | Bash/TaskOutput contains `fashion-video.mp4` (stitch output) |
+| 6 | `clips` | Bash contains `generate-video.ts` AND output contains `video-6.mp4` |
+| 7 | `clips` | TaskOutput contains `video-*.mp4` AND `retrieval_status>success` |
+
+**Why `complete` before `clips`?** When `stitch-videos.ts` runs, its output logs the input clips (`video-1.mp4`, etc.). If `clips` were checked first, stitch would incorrectly trigger the clips checkpoint instead of complete.
 
 **Notes:**
-- The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). This ensures users can approve modified frames before video generation.
+- The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). After resize, users review the resized frames before video generation continues.
 - Multi-frame editing is supported: users can say "modify frames 2 and 3", "modify frames 1-4", or "modify all frames".
 - The `clips` checkpoint triggers after all 6 video clips are generated, allowing users to review clips, choose playback speed, enable loop, or regenerate specific clips before stitching.
 - The `complete` checkpoint also checks `TaskOutput` tool results for when stitch runs as a background task (timeout >2min).
