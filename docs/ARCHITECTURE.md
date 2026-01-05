@@ -292,30 +292,39 @@ Executes generation scripts:
 | `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
 | `stitch-videos.ts` | FFmpeg xfade | Combine with transitions |
 
-#### crop-frames.ts - Adaptive Grid Detection
+#### crop-frames.ts - Adaptive Variance-Based Grid Detection
 
-Auto-detects grid structure from contact sheets and calculates per-cell boundaries directly from detected gutter positions. Adapts to non-uniform AI-generated layouts.
+Auto-detects grid structure from contact sheets using variance-based gutter detection. Works with any gutter color (white, black, gray) and adapts to AI-generated layouts.
 
 ```
-Contact Sheet → Canny Edges → Projection Profiles → Find Gutter Centers → Per-Cell Boundaries
+Contact Sheet → Grayscale → Variance Profile → Adaptive Threshold → Find Uniform Regions → Per-Cell Boundaries
 ```
 
 **Algorithm:**
-1. **Edge Detection** - Canny algorithm finds boundaries in the image
-2. **Projection Profiles** - Sum edge pixels along columns/rows
-3. **Peak Detection** - High values indicate gutter line center positions
-4. **Gutter Width Estimation** - Calculate from spacing between consecutive gutter centers
-5. **Per-Cell Boundary Calculation** - Each cell's boundaries derived directly from gutter positions:
+1. **Variance Profile** - Sample 17 lines (10%-90%) across perpendicular axis for each position
+2. **Adaptive Threshold** - Find P1 (1st percentile) variance, threshold = P1 × 10, clamped to [50, 300]
+3. **Uniform Region Detection** - True gutters have near-zero variance across entire span
+4. **Gutter Filtering** - Exclude edge margins (within 5% of image edges), select expected count
+5. **Per-Cell Boundary Calculation** - Each cell's boundaries derived directly from gutter start/end:
    ```
-   Cell 0: leftEdge + margin  →  gutterCenter[0] - gutterWidth/2 - margin
-   Cell 1: gutterCenter[0] + gutterWidth/2 + margin  →  gutterCenter[1] - gutterWidth/2 - margin
-   Cell N: gutterCenter[N-1] + gutterWidth/2 + margin  →  rightEdge - margin
+   Cell 0: contentLeft + margin  →  gutter[0].start - margin
+   Cell 1: gutter[0].end + margin  →  gutter[1].start - margin
+   Cell N: gutter[N-1].end + margin  →  contentRight - margin
    ```
-6. **Safety Margin** - 15% of gutter width applied to stay inside cell content
+6. **Adaptive Safety Margin** - 15% of average gutter width, minimum 3px
 
-**Why per-cell boundaries?** AI-generated contact sheets are non-deterministic—gutter widths, cell sizes, and margins can vary. The old uniform spacing formula (`x = offset + col * (cellWidth + gutter)`) failed when grids weren't perfectly uniform. Per-cell boundaries adapt to each specific image.
+**Adaptive Parameters:**
+| Parameter | Formula |
+|-----------|---------|
+| `varianceThreshold` | P1 × 10, clamped to [50, 300] |
+| `minGutterWidth` | 1% of cell size, min 3px |
+| `safetyMargin` | 15% of gutter width, min 3px |
 
-**Why hybrid detection?** Sending images to AI for cropping costs ~$1/run. Reading 7MB images consumes excessive tokens. This approach uses pure math—zero AI tokens, works with any contact sheet layout.
+**Why variance-based?** Edge detection found transition points (where content meets gutter), not gutter centers—causing crops to start inside gutters. Variance-based detection finds actual uniform regions regardless of color.
+
+**Why adaptive thresholds?** AI-generated contact sheets vary significantly. Fixed thresholds fail on different images. True gutters have variance ~0-1, content has variance ~1000-7000. P1 percentile adapts to each image's characteristics.
+
+**Zero AI tokens** - Pure math approach, works with any contact sheet layout.
 
 #### resize-frames.ts - In-Place Updates
 
