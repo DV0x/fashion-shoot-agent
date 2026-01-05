@@ -32,6 +32,11 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
   // For Bash, we have the command in toolInput
   const command = toolName === 'Bash' ? (toolInput?.command || '') : '';
 
+  // Common checks for TaskOutput (background task) handling
+  const isTaskOutput = toolName === 'TaskOutput';
+  const hasSuccessStatus = output.includes('retrieval_status>success') || output.includes('"success"');
+  const hasError = output.includes('Error');
+
   // DEBUG: Log tool executions for checkpoint detection
   console.log(`🔍 [CHECKPOINT DEBUG] Checking ${toolName}:`);
   if (command) {
@@ -96,7 +101,10 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
   }
 
   // Detect frames resize (from resize-frames.ts)
-  if (command.includes('resize-frames.ts') && output.includes('"success": true')) {
+  // Note: Check for 'success' patterns that work with both raw and JSON-stringified output
+  // The output could be: "success": true OR \"success\": true OR success":true
+  const hasResizeSuccess = /success["\\]*:\s*true/.test(output) || output.includes('framesCount');
+  if (command.includes('resize-frames.ts') && hasResizeSuccess && !hasError) {
     // Extract aspect ratio from command if possible
     const aspectMatch = command.match(/--aspect-ratio\s+(\S+)/);
     const aspectRatio = aspectMatch ? aspectMatch[1] : 'new aspect ratio';
@@ -116,8 +124,28 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
     };
   }
 
-  // Detect clips creation (from generate-video.ts creating video-6.mp4 - the last clip)
-  if (command.includes('generate-video.ts') && output.includes('video-6.mp4')) {
+  // Detect clips creation or regeneration (from generate-video.ts)
+  // Triggers on:
+  // 1. Initial generation: video-6.mp4 (last of 6 sequential clips)
+  // 2. Clip regeneration: any single video-N.mp4 output
+  // Also check TaskOutput in case video generation runs as background task (>2min timeout)
+  const hasVideo6 = output.includes('video-6.mp4');
+  const hasAnyVideo = /video-[1-6]\.mp4/.test(output);
+
+  // Check if this is a single clip regeneration (only one video mentioned)
+  const videoMatches = output.match(/video-[1-6]\.mp4/g);
+  const isSingleClipRegen = videoMatches && videoMatches.length === 1;
+
+  const isClipsCreated =
+    (command.includes('generate-video.ts') && (hasVideo6 || isSingleClipRegen)) ||
+    (isTaskOutput && hasAnyVideo && hasSuccessStatus && !hasError);
+
+  if (isClipsCreated) {
+    const regenClip = isSingleClipRegen ? videoMatches[0].match(/video-(\d)/)?.[1] : null;
+    const message = regenClip
+      ? `Clip ${regenClip} regenerated. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate more clips.`
+      : '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.';
+
     return {
       stage: 'clips',
       status: 'complete',
@@ -129,7 +157,7 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
         'outputs/videos/video-5.mp4',
         'outputs/videos/video-6.mp4'
       ],
-      message: '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.'
+      message
     };
   }
 
@@ -140,9 +168,7 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
   const hasFashionVideoInOutput = output.includes('fashion-video.mp4');
   const hasFFmpeg = command.includes('ffmpeg');
   const hasFashionVideoInCommand = command.includes('outputs/final/fashion-video.mp4');
-  const hasError = output.includes('Error');
-  const isTaskOutput = toolName === 'TaskOutput';
-  const hasSuccessStatus = output.includes('retrieval_status>success') || output.includes('"success"');
+  // Note: isTaskOutput, hasSuccessStatus, hasError are defined at top of function
 
   // DEBUG: Log final video detection checks
   console.log(`🔍 [CHECKPOINT DEBUG] Final video checks:`);

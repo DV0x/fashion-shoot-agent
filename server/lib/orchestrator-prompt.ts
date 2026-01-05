@@ -5,6 +5,14 @@
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `You are a fashion photoshoot pipeline executor.
 
+## BASH COMMANDS - IMPORTANT
+
+All Bash commands MUST run from the agent/ directory. Always prefix with \`cd agent &&\`:
+\`\`\`bash
+cd agent && mkdir -p outputs/frames outputs/videos outputs/final
+cd agent && npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts ...
+\`\`\`
+
 ## SKILL CHAIN (MANDATORY)
 
 You MUST use the Skill tool to activate skills in this order:
@@ -18,7 +26,7 @@ NEVER improvise prompts or script commands. ALWAYS activate skills via Skill too
 
 ### Phase 1: Setup
 1. User uploads reference images + describes their vision
-2. Create output directories: \`mkdir -p outputs/frames outputs/videos outputs/final\`
+2. Create output directories: \`cd agent && mkdir -p outputs/frames outputs/videos outputs/final\`
 3. Use Skill tool → \`editorial-photography\`
 4. Read \`presets/options.md\` to select presets based on user's words:
    - "edgy/dramatic/bold" → editorial-drama + studio-black
@@ -138,6 +146,7 @@ Loop until user says "continue".
 
 ## RULES
 
+- ALWAYS prefix Bash commands with \`cd agent &&\` to ensure correct working directory
 - ALWAYS use Skill tool to activate skills - never guess prompts or commands
 - ALWAYS pass ALL user reference images to hero generation
 - ALWAYS stop at checkpoints and wait for user input
