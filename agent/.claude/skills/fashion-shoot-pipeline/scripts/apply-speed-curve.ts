@@ -16,16 +16,26 @@
  * slowing down at the end of each clip, so hard cuts happen during slow-motion.
  */
 
-import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, rmSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
+
+// Shared libraries
 import {
   getEasingFunction,
   listEasingNames,
   createBezierEasing,
   type EasingFunction,
 } from "./lib/easing-functions.js";
+import {
+  getVideoMetadata,
+  encodeFramesToVideo,
+  extractFramesAtTimestamps,
+} from "./lib/video-utils.js";
+import {
+  calculateSourceTimestamps,
+  getSampleTimestamps,
+} from "./lib/timestamp-calc.js";
 
 // =============================================================================
 // CONFIGURATION
@@ -40,19 +50,12 @@ const DEFAULT_BITRATE = "25M"; // 25 Mbps for high quality
 // TYPES
 // =============================================================================
 
-interface VideoMetadata {
-  duration: number;
-  width: number;
-  height: number;
-  fps: number;
-}
-
 interface SpeedCurveOptions {
   input: string;
   output: string;
   outputDuration: number;
   outputFps: number;
-  easing: string | [number, number, number, number]; // name or bezier control points
+  easing: string | [number, number, number, number];
   bitrate: string;
   keepTempFrames: boolean;
 }
@@ -69,170 +72,6 @@ interface SpeedCurveResult {
 }
 
 // =============================================================================
-// VIDEO METADATA
-// =============================================================================
-
-/**
- * Get video metadata using ffprobe
- */
-function getVideoMetadata(videoPath: string): VideoMetadata {
-  const cmd = `ffprobe -v quiet -print_format json -show_format -show_streams "${videoPath}"`;
-  const result = execSync(cmd, { encoding: "utf-8" });
-  const data = JSON.parse(result);
-
-  const videoStream = data.streams.find((s: any) => s.codec_type === "video");
-  if (!videoStream) {
-    throw new Error(`No video stream found in ${videoPath}`);
-  }
-
-  // Parse frame rate (can be "24/1" or "23.976")
-  let fps = 24;
-  if (videoStream.r_frame_rate) {
-    const [num, den] = videoStream.r_frame_rate.split("/").map(Number);
-    fps = den ? num / den : num;
-  }
-
-  return {
-    duration: parseFloat(data.format.duration),
-    width: videoStream.width,
-    height: videoStream.height,
-    fps,
-  };
-}
-
-// =============================================================================
-// TIMESTAMP CALCULATION (THE CORE ALGORITHM)
-// =============================================================================
-
-/**
- * Calculate source timestamps based on easing function.
- *
- * This is the core algorithm from easy-peasy-ease:
- * For each output frame, calculate which source timestamp to sample.
- *
- * @param easingFunc - The easing function to apply
- * @param inputDuration - Duration of source video in seconds
- * @param outputDuration - Desired output duration in seconds
- * @param outputFps - Output frame rate
- * @returns Array of source timestamps in seconds
- */
-function calculateSourceTimestamps(
-  easingFunc: EasingFunction,
-  inputDuration: number,
-  outputDuration: number,
-  outputFps: number
-): number[] {
-  const totalOutputFrames = Math.floor(outputDuration * outputFps);
-  const timestamps: number[] = [];
-
-  for (let frameIndex = 0; frameIndex < totalOutputFrames; frameIndex++) {
-    // Normalize frame index to 0-1 range (output progress)
-    const outputProgress =
-      totalOutputFrames > 1 ? frameIndex / (totalOutputFrames - 1) : 0;
-
-    // Apply easing function: maps output progress to source progress
-    const sourceProgress = easingFunc(outputProgress);
-
-    // Map to source timestamp, clamped to valid range
-    const sourceTime = Math.max(
-      0,
-      Math.min(sourceProgress * inputDuration, inputDuration - 0.001)
-    );
-
-    timestamps.push(sourceTime);
-  }
-
-  return timestamps;
-}
-
-// =============================================================================
-// FRAME EXTRACTION & ENCODING
-// =============================================================================
-
-/**
- * Extract frames at specific timestamps using FFmpeg
- */
-async function extractFramesAtTimestamps(
-  inputPath: string,
-  timestamps: number[],
-  tempDir: string,
-  width: number,
-  height: number
-): Promise<void> {
-  console.error(`Extracting ${timestamps.length} frames...`);
-
-  // Use a single FFmpeg command with select filter for efficiency
-  // This is much faster than spawning FFmpeg for each frame
-
-  // Build select expression: select frames nearest to our timestamps
-  // We'll use the fps filter to get all frames, then select specific ones
-
-  // For accuracy, we extract each frame individually using -ss (seek)
-  // This is slower but more accurate for easing curves
-
-  const totalFrames = timestamps.length;
-  let extracted = 0;
-
-  // Process in batches for progress reporting
-  const batchSize = 10;
-
-  for (let i = 0; i < timestamps.length; i++) {
-    const timestamp = timestamps[i];
-    const outputFile = path.join(tempDir, `frame_${String(i).padStart(6, "0")}.png`);
-
-    // Use -ss before -i for fast seeking
-    const cmd = [
-      "ffmpeg",
-      "-y",
-      "-ss", timestamp.toFixed(6),
-      "-i", inputPath,
-      "-frames:v", "1",
-      "-vf", `scale=${width}:${height}`,
-      "-q:v", "1", // Best quality for PNG
-      outputFile,
-    ];
-
-    execSync(cmd.join(" "), { stdio: "pipe" });
-
-    extracted++;
-    if (extracted % batchSize === 0 || extracted === totalFrames) {
-      const percent = Math.round((extracted / totalFrames) * 100);
-      console.error(`  Progress: ${extracted}/${totalFrames} frames (${percent}%)`);
-    }
-  }
-}
-
-/**
- * Encode frames into video using FFmpeg
- */
-function encodeFramesToVideo(
-  tempDir: string,
-  outputPath: string,
-  fps: number,
-  bitrate: string
-): void {
-  console.error(`Encoding video at ${fps}fps...`);
-
-  const inputPattern = path.join(tempDir, "frame_%06d.png");
-
-  const cmd = [
-    "ffmpeg",
-    "-y",
-    "-framerate", String(fps),
-    "-i", inputPattern,
-    "-c:v", "libx264",
-    "-preset", "slow",
-    "-crf", "18",
-    "-b:v", bitrate,
-    "-pix_fmt", "yuv420p",
-    "-movflags", "+faststart",
-    outputPath,
-  ];
-
-  execSync(cmd.join(" "), { stdio: "pipe" });
-}
-
-// =============================================================================
 // MAIN SPEED CURVE FUNCTION
 // =============================================================================
 
@@ -242,8 +81,15 @@ function encodeFramesToVideo(
 async function applySpeedCurve(
   options: SpeedCurveOptions
 ): Promise<SpeedCurveResult> {
-  const { input, output, outputDuration, outputFps, easing, bitrate, keepTempFrames } =
-    options;
+  const {
+    input,
+    output,
+    outputDuration,
+    outputFps,
+    easing,
+    bitrate,
+    keepTempFrames,
+  } = options;
 
   // Validate input exists
   if (!existsSync(input)) {
@@ -262,7 +108,6 @@ async function applySpeedCurve(
   let easingName: string;
 
   if (Array.isArray(easing)) {
-    // Custom bezier curve
     const [p1x, p1y, p2x, p2y] = easing;
     easingFunc = createBezierEasing(p1x, p1y, p2x, p2y);
     easingName = `bezier(${easing.join(",")})`;
@@ -276,21 +121,20 @@ async function applySpeedCurve(
     `  Output: ${outputDuration}s at ${outputFps}fps (${Math.round(outputDuration * outputFps)} frames)`
   );
 
-  // Calculate source timestamps
-  const timestamps = calculateSourceTimestamps(
+  // Calculate source timestamps using shared library
+  const { timestamps, totalFrames, compressionRatio } = calculateSourceTimestamps({
     easingFunc,
-    metadata.duration,
+    inputDuration: metadata.duration,
     outputDuration,
-    outputFps
-  );
-
-  // Log some sample timestamps to show the easing effect
-  console.error(`  Sample timestamps (showing easing effect):`);
-  const samples = [0, 0.25, 0.5, 0.75, 1].map((p) => {
-    const idx = Math.floor(p * (timestamps.length - 1));
-    return `    ${(p * 100).toFixed(0)}% output → ${timestamps[idx].toFixed(3)}s source`;
+    outputFps,
   });
-  samples.forEach((s) => console.error(s));
+
+  // Log sample timestamps to show the easing effect
+  console.error(`  Sample timestamps (showing easing effect):`);
+  const samples = getSampleTimestamps(timestamps);
+  samples.forEach(({ progress, timestamp }) => {
+    console.error(`    ${(progress * 100).toFixed(0)}% output → ${timestamp.toFixed(3)}s source`);
+  });
 
   // Create temp directory for frames
   const tempDir = path.join(path.dirname(output), `.temp_frames_${Date.now()}`);
@@ -298,13 +142,20 @@ async function applySpeedCurve(
 
   try {
     // Extract frames at calculated timestamps
-    await extractFramesAtTimestamps(
-      input,
-      timestamps,
+    console.error(`Extracting ${timestamps.length} frames...`);
+    await extractFramesAtTimestamps({
+      inputPath: input,
       tempDir,
-      metadata.width,
-      metadata.height
-    );
+      timestamps,
+      width: metadata.width,
+      height: metadata.height,
+      frameOffset: 0,
+      scaleWithPadding: false,
+      onProgress: (extracted, total) => {
+        const percent = Math.round((extracted / total) * 100);
+        console.error(`  Progress: ${extracted}/${total} frames (${percent}%)`);
+      },
+    });
 
     // Ensure output directory exists
     const outputDir = path.dirname(output);
@@ -313,7 +164,13 @@ async function applySpeedCurve(
     }
 
     // Encode frames to video
-    encodeFramesToVideo(tempDir, output, outputFps, bitrate);
+    const inputPattern = path.join(tempDir, "frame_%06d.png");
+    encodeFramesToVideo({
+      inputPattern,
+      outputPath: output,
+      fps: outputFps,
+      bitrate,
+    });
 
     console.error(`Output saved to: ${output}`);
 
@@ -324,8 +181,8 @@ async function applySpeedCurve(
       outputDuration,
       outputFps,
       easing: easingName,
-      totalFrames: timestamps.length,
-      compressionRatio: metadata.duration / outputDuration,
+      totalFrames,
+      compressionRatio,
     };
   } finally {
     // Cleanup temp directory
@@ -418,11 +275,14 @@ Easing functions control the speed curve:
   }
 
   // Parse bezier or easing
-  let easing: string | [number, number, number, number] = values.easing || DEFAULT_EASING;
+  let easing: string | [number, number, number, number] =
+    values.easing || DEFAULT_EASING;
   if (values.bezier) {
     const parts = values.bezier.split(",").map(Number);
     if (parts.length !== 4 || parts.some(isNaN)) {
-      console.error("Error: --bezier must be 4 comma-separated numbers (p1x,p1y,p2x,p2y)");
+      console.error(
+        "Error: --bezier must be 4 comma-separated numbers (p1x,p1y,p2x,p2y)"
+      );
       process.exit(1);
     }
     easing = parts as [number, number, number, number];
@@ -431,7 +291,9 @@ Easing functions control the speed curve:
   return {
     input: values.input,
     output: values.output,
-    outputDuration: parseFloat(values["output-duration"] || String(DEFAULT_OUTPUT_DURATION)),
+    outputDuration: parseFloat(
+      values["output-duration"] || String(DEFAULT_OUTPUT_DURATION)
+    ),
     outputFps: parseInt(values["output-fps"] || String(DEFAULT_OUTPUT_FPS), 10),
     easing,
     bitrate: values.bitrate || DEFAULT_BITRATE,

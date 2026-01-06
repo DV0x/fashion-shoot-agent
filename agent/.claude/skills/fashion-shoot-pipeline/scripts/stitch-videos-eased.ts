@@ -16,16 +16,25 @@
  *     --easing dramaticSwoop
  */
 
-import { execSync } from "child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
+
+// Shared libraries
 import {
   getEasingFunction,
   listEasingNames,
   createBezierEasing,
   type EasingFunction,
 } from "./lib/easing-functions.js";
+import {
+  getVideoMetadata,
+  encodeFramesToVideo,
+  extractFramesAtTimestamps,
+  findMaxDimensions,
+  type VideoMetadata,
+} from "./lib/video-utils.js";
+import { calculateSourceTimestamps } from "./lib/timestamp-calc.js";
 
 // =============================================================================
 // CONFIGURATION
@@ -39,13 +48,6 @@ const DEFAULT_BITRATE = "25M";
 // =============================================================================
 // TYPES
 // =============================================================================
-
-interface VideoMetadata {
-  duration: number;
-  width: number;
-  height: number;
-  fps: number;
-}
 
 interface StitchOptions {
   clips: string[];
@@ -68,144 +70,12 @@ interface StitchResult {
 }
 
 // =============================================================================
-// VIDEO METADATA
-// =============================================================================
-
-function getVideoMetadata(videoPath: string): VideoMetadata {
-  const cmd = `ffprobe -v quiet -print_format json -show_format -show_streams "${videoPath}"`;
-  const result = execSync(cmd, { encoding: "utf-8" });
-  const data = JSON.parse(result);
-
-  const videoStream = data.streams.find((s: any) => s.codec_type === "video");
-  if (!videoStream) {
-    throw new Error(`No video stream found in ${videoPath}`);
-  }
-
-  let fps = 24;
-  if (videoStream.r_frame_rate) {
-    const [num, den] = videoStream.r_frame_rate.split("/").map(Number);
-    fps = den ? num / den : num;
-  }
-
-  return {
-    duration: parseFloat(data.format.duration),
-    width: videoStream.width,
-    height: videoStream.height,
-    fps,
-  };
-}
-
-// =============================================================================
-// TIMESTAMP CALCULATION
-// =============================================================================
-
-function calculateSourceTimestamps(
-  easingFunc: EasingFunction,
-  inputDuration: number,
-  outputDuration: number,
-  outputFps: number
-): number[] {
-  const totalOutputFrames = Math.floor(outputDuration * outputFps);
-  const timestamps: number[] = [];
-
-  for (let frameIndex = 0; frameIndex < totalOutputFrames; frameIndex++) {
-    const outputProgress =
-      totalOutputFrames > 1 ? frameIndex / (totalOutputFrames - 1) : 0;
-    const sourceProgress = easingFunc(outputProgress);
-    const sourceTime = Math.max(
-      0,
-      Math.min(sourceProgress * inputDuration, inputDuration - 0.001)
-    );
-    timestamps.push(sourceTime);
-  }
-
-  return timestamps;
-}
-
-// =============================================================================
-// FRAME EXTRACTION & ENCODING
-// =============================================================================
-
-async function extractFramesAtTimestamps(
-  inputPath: string,
-  timestamps: number[],
-  tempDir: string,
-  frameOffset: number,
-  width: number,
-  height: number
-): Promise<number> {
-  const totalFrames = timestamps.length;
-  let extracted = 0;
-  const batchSize = 10;
-
-  for (let i = 0; i < timestamps.length; i++) {
-    const timestamp = timestamps[i];
-    const globalFrameIndex = frameOffset + i;
-    const outputFile = path.join(
-      tempDir,
-      `frame_${String(globalFrameIndex).padStart(6, "0")}.png`
-    );
-
-    // Scale with padding to handle different aspect ratios (adds black bars if needed)
-    const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;
-
-    const cmd = [
-      "ffmpeg",
-      "-y",
-      "-ss", timestamp.toFixed(6),
-      "-i", `"${inputPath}"`,
-      "-frames:v", "1",
-      "-vf", `"${scaleFilter}"`,
-      "-q:v", "1",
-      `"${outputFile}"`,
-    ];
-
-    execSync(cmd.join(" "), { stdio: "pipe" });
-
-    extracted++;
-    if (extracted % batchSize === 0 || extracted === totalFrames) {
-      const percent = Math.round((extracted / totalFrames) * 100);
-      process.stderr.write(`\r    Frames: ${extracted}/${totalFrames} (${percent}%)`);
-    }
-  }
-  process.stderr.write("\n");
-
-  return timestamps.length;
-}
-
-function encodeFramesToVideo(
-  tempDir: string,
-  outputPath: string,
-  fps: number,
-  bitrate: string
-): void {
-  console.error(`Encoding final video at ${fps}fps...`);
-
-  const inputPattern = path.join(tempDir, "frame_%06d.png");
-
-  const cmd = [
-    "ffmpeg",
-    "-y",
-    "-framerate", String(fps),
-    "-i", `"${inputPattern}"`,
-    "-c:v", "libx264",
-    "-preset", "slow",
-    "-crf", "18",
-    "-b:v", bitrate,
-    "-pix_fmt", "yuv420p",
-    "-movflags", "+faststart",
-    `"${outputPath}"`,
-  ];
-
-  execSync(cmd.join(" "), { stdio: "pipe" });
-}
-
-// =============================================================================
 // MAIN STITCH FUNCTION
 // =============================================================================
 
 async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> {
-  const { clips, output, clipDuration, outputFps, easing, bitrate, keepTemp } = options;
+  const { clips, output, clipDuration, outputFps, easing, bitrate, keepTemp } =
+    options;
 
   // Validate all clips exist
   for (const clip of clips) {
@@ -234,15 +104,16 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
 
   // Analyze all clips to find target dimensions (use max of all)
   console.error(`\nAnalyzing clips...`);
-  const metadataList = clips.map((clip, i) => {
+  const metadataList: VideoMetadata[] = clips.map((clip, i) => {
     const meta = getVideoMetadata(clip);
-    console.error(`  [${i + 1}] ${path.basename(clip)}: ${meta.duration.toFixed(2)}s, ${meta.width}x${meta.height}`);
+    console.error(
+      `  [${i + 1}] ${path.basename(clip)}: ${meta.duration.toFixed(2)}s, ${meta.width}x${meta.height}`
+    );
     return meta;
   });
 
-  const targetWidth = Math.max(...metadataList.map((m) => m.width));
-  const targetHeight = Math.max(...metadataList.map((m) => m.height));
-  console.error(`  Target resolution: ${targetWidth}x${targetHeight}`);
+  const { maxWidth, maxHeight } = findMaxDimensions(metadataList);
+  console.error(`  Target resolution: ${maxWidth}x${maxHeight}`);
 
   // Create temp directory
   const tempDir = path.join(path.dirname(output), `.temp_stitch_${Date.now()}`);
@@ -259,24 +130,32 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
 
       console.error(`  [${i + 1}/${clips.length}] ${path.basename(clip)}`);
 
-      // Calculate timestamps for this clip
-      const timestamps = calculateSourceTimestamps(
+      // Calculate timestamps for this clip using shared library
+      const { timestamps } = calculateSourceTimestamps({
         easingFunc,
-        metadata.duration,
-        clipDuration,
-        outputFps
-      );
+        inputDuration: metadata.duration,
+        outputDuration: clipDuration,
+        outputFps,
+      });
 
-      // Extract frames with global frame numbering
-      const framesExtracted = await extractFramesAtTimestamps(
-        clip,
-        timestamps,
+      // Extract frames with global frame numbering and auto-scaling
+      const framesExtracted = await extractFramesAtTimestamps({
+        inputPath: clip,
         tempDir,
-        totalFrameCount,
-        targetWidth,
-        targetHeight
-      );
+        timestamps,
+        width: maxWidth,
+        height: maxHeight,
+        frameOffset: totalFrameCount,
+        scaleWithPadding: true, // Enable auto-scaling for stitching
+        onProgress: (extracted, total) => {
+          const percent = Math.round((extracted / total) * 100);
+          process.stderr.write(
+            `\r    Frames: ${extracted}/${total} (${percent}%)`
+          );
+        },
+      });
 
+      process.stderr.write("\n");
       totalFrameCount += framesExtracted;
     }
 
@@ -289,9 +168,15 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
     }
 
     // Encode all frames into final video
-    encodeFramesToVideo(tempDir, output, outputFps, bitrate);
+    const inputPattern = path.join(tempDir, "frame_%06d.png");
+    encodeFramesToVideo({
+      inputPattern,
+      outputPath: output,
+      fps: outputFps,
+      bitrate,
+    });
 
-    const totalDuration = (totalFrameCount / outputFps);
+    const totalDuration = totalFrameCount / outputFps;
     console.error(`\nOutput saved to: ${output}`);
     console.error(`  Duration: ${totalDuration.toFixed(2)}s`);
 
@@ -388,7 +273,9 @@ Examples:
   }
 
   if (!values.clips || values.clips.length < 2) {
-    console.error("Error: At least 2 clips are required (use --clips multiple times)");
+    console.error(
+      "Error: At least 2 clips are required (use --clips multiple times)"
+    );
     process.exit(1);
   }
   if (!values.output) {
@@ -396,7 +283,8 @@ Examples:
     process.exit(1);
   }
 
-  let easing: string | [number, number, number, number] = values.easing || DEFAULT_EASING;
+  let easing: string | [number, number, number, number] =
+    values.easing || DEFAULT_EASING;
   if (values.bezier) {
     const parts = values.bezier.split(",").map(Number);
     if (parts.length !== 4 || parts.some(isNaN)) {
@@ -409,7 +297,9 @@ Examples:
   return {
     clips: values.clips,
     output: values.output,
-    clipDuration: parseFloat(values["clip-duration"] || String(DEFAULT_CLIP_DURATION)),
+    clipDuration: parseFloat(
+      values["clip-duration"] || String(DEFAULT_CLIP_DURATION)
+    ),
     outputFps: parseInt(values["output-fps"] || String(DEFAULT_OUTPUT_FPS), 10),
     easing,
     bitrate: values.bitrate || DEFAULT_BITRATE,

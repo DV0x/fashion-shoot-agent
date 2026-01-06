@@ -35,6 +35,11 @@ interface CellBoundary {
   height: number;
 }
 
+interface NormalizedDimensions {
+  width: number;
+  height: number;
+}
+
 interface GutterRegion {
   start: number;
   end: number;
@@ -662,6 +667,67 @@ async function cropFrames(
   return results;
 }
 
+// Normalize all frames to uniform dimensions
+// Scales to max width/height with padding to preserve aspect ratio
+async function normalizeFrames(
+  results: CropResult[],
+  outputFormat: "png" | "jpeg" | "webp"
+): Promise<NormalizedDimensions> {
+  if (results.length === 0) {
+    return { width: 0, height: 0 };
+  }
+
+  // Find max dimensions
+  const maxWidth = Math.max(...results.map((r) => r.width));
+  const maxHeight = Math.max(...results.map((r) => r.height));
+
+  console.error(`\n--- Normalizing Frames ---`);
+  console.error(`Target dimensions: ${maxWidth}×${maxHeight}`);
+
+  // Check if normalization is actually needed
+  const needsNormalization = results.some(
+    (r) => r.width !== maxWidth || r.height !== maxHeight
+  );
+
+  if (!needsNormalization) {
+    console.error(`All frames already uniform - no normalization needed.`);
+    return { width: maxWidth, height: maxHeight };
+  }
+
+  // Normalize each frame
+  for (const result of results) {
+    if (result.width === maxWidth && result.height === maxHeight) {
+      console.error(`  frame-${result.frameNumber}: already ${maxWidth}×${maxHeight} - skipped`);
+      continue;
+    }
+
+    console.error(
+      `  frame-${result.frameNumber}: ${result.width}×${result.height} → ${maxWidth}×${maxHeight}`
+    );
+
+    // Read the current frame
+    const inputBuffer = await sharp(result.outputPath).toBuffer();
+
+    // Resize with padding (same as video-utils buildScaleFilter logic)
+    // This preserves aspect ratio and adds black padding if needed
+    await sharp(inputBuffer)
+      .resize(maxWidth, maxHeight, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 1 }, // Black padding
+      })
+      .toFormat(outputFormat)
+      .toFile(result.outputPath);
+
+    // Update the result dimensions
+    result.width = maxWidth;
+    result.height = maxHeight;
+  }
+
+  console.error(`Normalized ${results.length} frames to ${maxWidth}×${maxHeight}`);
+
+  return { width: maxWidth, height: maxHeight };
+}
+
 // Parse command line arguments
 function parseArguments() {
   const { values } = parseArgs({
@@ -672,6 +738,7 @@ function parseArguments() {
       cols: { type: "string", short: "c" },
       format: { type: "string", short: "f" },
       prefix: { type: "string", short: "p" },
+      "no-normalize": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: false,
@@ -694,6 +761,7 @@ Options:
   -c, --cols        Number of columns in the grid (default: 3)
   -f, --format      Output format: png, jpeg, webp (default: png)
   -p, --prefix      Output filename prefix (default: "frame")
+      --no-normalize  Skip frame normalization (keep varying sizes)
   -h, --help        Show this help message
 
 Examples:
@@ -713,7 +781,8 @@ Examples:
 Output:
   Creates frame-1.png through frame-N.png in the output directory.
   Frames are numbered left-to-right, top-to-bottom.
-  All frames have uniform dimensions.
+  All frames are normalized to uniform dimensions (max width × max height).
+  Use --no-normalize to keep original cropped sizes.
 
 Frame Layout (2x3 grid):
   ┌─────────┬─────────┬─────────┐
@@ -755,6 +824,7 @@ Frame Layout (2x3 grid):
     cols,
     outputFormat: (values.format || "png") as "png" | "jpeg" | "webp",
     prefix: values.prefix || "frame",
+    normalize: !values["no-normalize"], // Default: true (normalize ON)
   };
 }
 
@@ -788,7 +858,15 @@ async function main() {
       args.prefix
     );
 
-    console.error(`\nSuccessfully cropped ${results.length} frames.\n`);
+    console.error(`\nSuccessfully cropped ${results.length} frames.`);
+
+    // Normalize frames to uniform dimensions (unless --no-normalize)
+    let normalizedDimensions: NormalizedDimensions | null = null;
+    if (args.normalize) {
+      normalizedDimensions = await normalizeFrames(results, args.outputFormat);
+    } else {
+      console.error(`\nSkipping normalization (--no-normalize flag set)`);
+    }
 
     // Output JSON result to stdout (for pipeline integration)
     console.log(
@@ -796,6 +874,8 @@ async function main() {
         {
           success: true,
           framesCount: results.length,
+          normalized: args.normalize,
+          normalizedDimensions: normalizedDimensions,
           grid: {
             rows: grid.rows,
             cols: grid.cols,

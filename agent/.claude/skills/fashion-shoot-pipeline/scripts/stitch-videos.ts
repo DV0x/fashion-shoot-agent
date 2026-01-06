@@ -2,8 +2,11 @@
 /**
  * stitch-videos.ts
  *
- * Stitch multiple video clips with smooth eased transitions using FFmpeg.
+ * Stitch multiple video clips with smooth eased transitions using FFmpeg xfade.
  * Uses custom expressions to achieve smooth easing (cubic, sinusoidal, etc.)
+ *
+ * NOTE: This script uses FFmpeg's xfade filter for transitions (fade, wipe, dissolve).
+ * For speed-curve based stitching (easy-peasy-ease style), use stitch-videos-eased.ts
  *
  * Usage:
  *   npx tsx stitch-videos.ts \
@@ -21,12 +24,19 @@ import { existsSync } from "fs";
 import { parseArgs } from "util";
 import * as path from "path";
 
+// Shared utilities
+import { buildScaleFilter, type VideoMetadata } from "./lib/video-utils.js";
+
+// =============================================================================
+// FFMPEG EASING EXPRESSIONS
+// =============================================================================
+
 // Easing expressions - store eased progress in st(0)
 // Based on https://github.com/scriptituk/xfade-easing
 // Note: "in" = fast start/slow end (CSS ease-out), "out" = slow start/fast end (CSS ease-in)
 const EASING_EXPRESSIONS: Record<string, string> = {
   // Basic
-  "linear": "st(0,P)",
+  linear: "st(0,P)",
 
   // Quadratic
   "quadratic-in": "st(0,P*(2-P))",
@@ -55,36 +65,45 @@ const EASING_EXPRESSIONS: Record<string, string> = {
 
   // Premium/Fashion presets - approximations of cubic-bezier curves
   // "luxurious" approximates cubic-bezier(0.19, 1, 0.22, 1) - very fast start, ultra gentle end
-  "luxurious": "st(0,1-(1-P)^6)",
+  luxurious: "st(0,1-(1-P)^6)",
   // "cinematic" - smooth, professional feel
-  "cinematic": "st(0,P*P*(3-2*P))",
+  cinematic: "st(0,P*P*(3-2*P))",
   // "smooth" - classic smoothstep, gentle both ends
-  "smooth": "st(0,P*P*(3-2*P))",
+  smooth: "st(0,P*P*(3-2*P))",
 };
 
 // Transition expressions - read eased progress from ld(0)
 // These work with the eased value instead of linear P
 const TRANSITION_EXPRESSIONS: Record<string, string> = {
-  "fade": "A*ld(0)+B*(1-ld(0))",
+  fade: "A*ld(0)+B*(1-ld(0))",
   // fadeblack: first half fades A to black, second half fades black to B
   // Uses PLANE to handle YUV correctly (Y=0 for black, but U/V=128 for neutral)
-  "fadeblack": "st(1,if(eq(PLANE,0),0,128));if(lt(ld(0),0.5),lerp(A,ld(1),2*ld(0)),lerp(ld(1),B,2*ld(0)-1))",
+  fadeblack:
+    "st(1,if(eq(PLANE,0),0,128));if(lt(ld(0),0.5),lerp(A,ld(1),2*ld(0)),lerp(ld(1),B,2*ld(0)-1))",
   // fadewhite: first half fades A to white, second half fades white to B
-  "fadewhite": "st(1,if(eq(PLANE,0),255,128));if(lt(ld(0),0.5),lerp(A,ld(1),2*ld(0)),lerp(ld(1),B,2*ld(0)-1))",
-  "wipeleft": "if(gt(X,W*ld(0)),B,A)",
-  "wiperight": "if(gt(X,W*(1-ld(0))),A,B)",
-  "wipeup": "if(gt(Y,H*ld(0)),B,A)",
-  "wipedown": "if(gt(Y,H*(1-ld(0))),A,B)",
-  "slideleft": "if(gt(X,W*ld(0)),B,if(gt(X,W*ld(0)-W),b(X-W*ld(0)+W,Y),A))",
-  "slideright": "if(lt(X,W*(1-ld(0))),B,if(lt(X,W*(2-ld(0))),a(X-W+W*ld(0),Y),A))",
-  "circlecrop": "if(lt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*ld(0)),A,B)",
-  "circleopen": "if(lt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*ld(0)),B,A)",
-  "circleclose": "if(gt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*(1-ld(0))),B,A)",
-  "dissolve": "st(1,st(1,sin(X*12.9898+Y*78.233)*43758.545)-floor(ld(1)));st(1,ld(1)*2+ld(0)*2-1.5);if(gte(ld(1),0.5),A,B)",
+  fadewhite:
+    "st(1,if(eq(PLANE,0),255,128));if(lt(ld(0),0.5),lerp(A,ld(1),2*ld(0)),lerp(ld(1),B,2*ld(0)-1))",
+  wipeleft: "if(gt(X,W*ld(0)),B,A)",
+  wiperight: "if(gt(X,W*(1-ld(0))),A,B)",
+  wipeup: "if(gt(Y,H*ld(0)),B,A)",
+  wipedown: "if(gt(Y,H*(1-ld(0))),A,B)",
+  slideleft:
+    "if(gt(X,W*ld(0)),B,if(gt(X,W*ld(0)-W),b(X-W*ld(0)+W,Y),A))",
+  slideright:
+    "if(lt(X,W*(1-ld(0))),B,if(lt(X,W*(2-ld(0))),a(X-W+W*ld(0),Y),A))",
+  circlecrop: "if(lt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*ld(0)),A,B)",
+  circleopen: "if(lt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*ld(0)),B,A)",
+  circleclose: "if(gt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*(1-ld(0))),B,A)",
+  dissolve:
+    "st(1,st(1,sin(X*12.9898+Y*78.233)*43758.545)-floor(ld(1)));st(1,ld(1)*2+ld(0)*2-1.5);if(gte(ld(1),0.5),A,B)",
 };
 
 type EasingType = keyof typeof EASING_EXPRESSIONS;
 type TransitionType = keyof typeof TRANSITION_EXPRESSIONS;
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 interface StitchOptions {
   clips: string[];
@@ -93,19 +112,19 @@ interface StitchOptions {
   transitionType?: TransitionType;
   easing?: EasingType;
   clipDuration?: number;
-  speed?: number; // Playback speed multiplier (1.5 = 50% faster)
-  loop?: boolean; // Add first clip at end to create seamless loop (6→1 transition)
+  speed?: number;
+  loop?: boolean;
 }
 
-// Video metadata from ffprobe
-interface VideoMetadata {
-  duration: number;
-  width: number;
-  height: number;
-}
+// =============================================================================
+// VIDEO METADATA (using fluent-ffmpeg)
+// =============================================================================
 
-// Get video metadata (duration + dimensions) using ffprobe
-function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
+/**
+ * Get video metadata using fluent-ffmpeg's ffprobe
+ * Returns a Promise for async operation
+ */
+function getVideoMetadataAsync(filePath: string): Promise<VideoMetadata> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
@@ -119,22 +138,38 @@ function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
       }
 
       // Find video stream for dimensions
-      const videoStream = metadata.streams.find(s => s.codec_type === "video");
+      const videoStream = metadata.streams.find(
+        (s) => s.codec_type === "video"
+      );
       if (!videoStream || !videoStream.width || !videoStream.height) {
         reject(new Error(`Could not determine dimensions for ${filePath}`));
         return;
+      }
+
+      // Parse frame rate
+      let fps = 24;
+      if (videoStream.r_frame_rate) {
+        const [num, den] = videoStream.r_frame_rate.split("/").map(Number);
+        fps = den ? num / den : num;
       }
 
       resolve({
         duration,
         width: videoStream.width,
         height: videoStream.height,
+        fps,
       });
     });
   });
 }
 
-// Validate all input clips exist
+// =============================================================================
+// FILTER BUILDING
+// =============================================================================
+
+/**
+ * Validate all input clips exist
+ */
 function validateClips(clips: string[]): void {
   for (const clip of clips) {
     if (!existsSync(clip)) {
@@ -143,7 +178,9 @@ function validateClips(clips: string[]): void {
   }
 }
 
-// Build the combined easing + transition expression
+/**
+ * Build the combined easing + transition expression
+ */
 function buildCustomExpr(easing: EasingType, transition: TransitionType): string {
   const easingExpr = EASING_EXPRESSIONS[easing];
   const transitionExpr = TRANSITION_EXPRESSIONS[transition];
@@ -159,8 +196,10 @@ function buildCustomExpr(easing: EasingType, transition: TransitionType): string
   return `${easingExpr};${transitionExpr}`;
 }
 
-// Build xfade filter chain for multiple clips using custom expressions
-// Now includes scaling step to normalize all videos to same dimensions
+/**
+ * Build xfade filter chain for multiple clips using custom expressions
+ * Now includes scaling step to normalize all videos to same dimensions
+ */
 function buildFilterComplex(
   clipCount: number,
   clipDurations: number[],
@@ -181,14 +220,10 @@ function buildFilterComplex(
 
   const filters: string[] = [];
 
-  // Step 1: Scale all clips to target dimensions
-  // Uses scale + pad to handle different aspect ratios (adds black bars if needed)
+  // Step 1: Scale all clips to target dimensions using shared utility
+  const scaleFilter = buildScaleFilter(targetWidth, targetHeight);
   for (let i = 0; i < clipCount; i++) {
-    filters.push(
-      `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,` +
-      `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black,` +
-      `setsar=1[scaled${i}]`
-    );
+    filters.push(`[${i}:v]${scaleFilter}[scaled${i}]`);
   }
 
   // Step 2: Apply speed adjustment if specified
@@ -206,9 +241,10 @@ function buildFilterComplex(
   }
 
   // Adjust durations for speed
-  const adjustedDurations = speed && speed !== 1
-    ? clipDurations.map(d => d / speed)
-    : clipDurations;
+  const adjustedDurations =
+    speed && speed !== 1
+      ? clipDurations.map((d) => d / speed)
+      : clipDurations;
 
   // Step 3: Build xfade chain
   let lastOutput = `[${speedInputs[0]}]`;
@@ -230,7 +266,13 @@ function buildFilterComplex(
   return filters.join(";");
 }
 
-// Stitch videos using FFmpeg with custom easing expressions
+// =============================================================================
+// MAIN STITCH FUNCTION
+// =============================================================================
+
+/**
+ * Stitch videos using FFmpeg with custom easing expressions
+ */
 async function stitchVideos(options: StitchOptions): Promise<string> {
   const {
     clips: inputClips,
@@ -252,17 +294,21 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
 
   validateClips(inputClips); // Only validate unique clips
 
-  console.error(`Stitching ${inputClips.length} video clips${loop ? " (loop enabled → " + clips.length + " total)" : ""}...`);
+  console.error(
+    `Stitching ${inputClips.length} video clips${loop ? " (loop enabled → " + clips.length + " total)" : ""}...`
+  );
   console.error(`Transition: ${transitionType}`);
   console.error(`Easing: ${easing}`);
   console.error(`Transition duration: ${transitionDuration}s`);
   if (speed && speed !== 1) {
-    console.error(`Speed: ${speed}x (${((speed - 1) * 100).toFixed(0)}% faster)`);
+    console.error(
+      `Speed: ${speed}x (${((speed - 1) * 100).toFixed(0)}% faster)`
+    );
   }
 
   // Get metadata (duration + dimensions) for all clips
   console.error("Probing clip metadata...");
-  const clipMetadata = await Promise.all(clips.map(getVideoMetadata));
+  const clipMetadata = await Promise.all(clips.map(getVideoMetadataAsync));
 
   // Get durations
   let clipDurations: number[];
@@ -270,19 +316,21 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     console.error(`Using fixed clip duration: ${clipDuration}s`);
     clipDurations = clips.map(() => clipDuration);
   } else {
-    clipDurations = clipMetadata.map(m => m.duration);
+    clipDurations = clipMetadata.map((m) => m.duration);
     clipMetadata.forEach((m, i) => {
-      console.error(`  ${path.basename(clips[i])}: ${m.duration.toFixed(2)}s (${m.width}x${m.height})`);
+      console.error(
+        `  ${path.basename(clips[i])}: ${m.duration.toFixed(2)}s (${m.width}x${m.height})`
+      );
     });
   }
 
   // Calculate target dimensions (use max width/height to avoid cropping)
-  const targetWidth = Math.max(...clipMetadata.map(m => m.width));
-  const targetHeight = Math.max(...clipMetadata.map(m => m.height));
+  const targetWidth = Math.max(...clipMetadata.map((m) => m.width));
+  const targetHeight = Math.max(...clipMetadata.map((m) => m.height));
 
   // Check if scaling is needed
   const needsScaling = clipMetadata.some(
-    m => m.width !== targetWidth || m.height !== targetHeight
+    (m) => m.width !== targetWidth || m.height !== targetHeight
   );
   if (needsScaling) {
     console.error(`Normalizing all clips to ${targetWidth}x${targetHeight}`);
@@ -319,13 +367,20 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
     command
       .complexFilter(filterComplex)
       .outputOptions([
-        "-map", "[vout]",
-        "-filter_complex_threads", "1",  // Required for custom expressions with state variables
-        "-c:v", "libx264",         // Use H.264 codec
-        "-profile:v", "high",      // High profile (browser-compatible)
-        "-pix_fmt", "yuv420p",     // YUV 4:2:0 (required for browser playback)
-        "-crf", "18",              // High quality
-        "-movflags", "+faststart"  // Move moov atom to beginning for web streaming
+        "-map",
+        "[vout]",
+        "-filter_complex_threads",
+        "1", // Required for custom expressions with state variables
+        "-c:v",
+        "libx264", // Use H.264 codec
+        "-profile:v",
+        "high", // High profile (browser-compatible)
+        "-pix_fmt",
+        "yuv420p", // YUV 4:2:0 (required for browser playback)
+        "-crf",
+        "18", // High quality
+        "-movflags",
+        "+faststart", // Move moov atom to beginning for web streaming
       ])
       .output(outputPath)
       .on("start", (cmdline) => {
@@ -347,7 +402,10 @@ async function stitchVideos(options: StitchOptions): Promise<string> {
   });
 }
 
-// Parse command line arguments
+// =============================================================================
+// CLI
+// =============================================================================
+
 function parseArguments() {
   const { values } = parseArgs({
     options: {
@@ -369,7 +427,7 @@ function parseArguments() {
     const transitions = Object.keys(TRANSITION_EXPRESSIONS).join(", ");
 
     console.log(`
-stitch-videos.ts - Stitch video clips with smooth eased transitions using FFmpeg
+stitch-videos.ts - Stitch video clips with smooth eased transitions using FFmpeg xfade
 
 Usage:
   npx tsx stitch-videos.ts [options]
@@ -460,14 +518,19 @@ Examples:
   const clipDuration = values["clip-duration"]
     ? parseFloat(values["clip-duration"])
     : undefined;
-  if (clipDuration !== undefined && (isNaN(clipDuration) || clipDuration <= 0)) {
+  if (
+    clipDuration !== undefined &&
+    (isNaN(clipDuration) || clipDuration <= 0)
+  ) {
     console.error("Error: --clip-duration must be a positive number");
     process.exit(1);
   }
 
   const speed = values.speed ? parseFloat(values.speed) : undefined;
   if (speed !== undefined && (isNaN(speed) || speed <= 0)) {
-    console.error("Error: --speed must be a positive number (e.g., 1.5 for 50% faster)");
+    console.error(
+      "Error: --speed must be a positive number (e.g., 1.5 for 50% faster)"
+    );
     process.exit(1);
   }
 
@@ -483,7 +546,10 @@ Examples:
   };
 }
 
-// Main
+// =============================================================================
+// MAIN
+// =============================================================================
+
 async function main() {
   try {
     const args = parseArguments();
