@@ -144,8 +144,7 @@ agent/.claude/skills/fashion-shoot-pipeline/
 │   │   ├── video-utils.ts            # FFmpeg utilities (extract, encode, scale)
 │   │   └── timestamp-calc.ts         # Speed curve timestamp algorithm
 │   ├── apply-speed-curve.ts          # Apply easing to single video
-│   ├── stitch-videos-eased.ts        # Combine videos with hard cuts
-│   └── stitch-videos.ts              # Original FFmpeg xfade version
+│   └── stitch-videos-eased.ts        # Combine videos with speed curves
 └── docs/
     └── SPEED_CURVES_IMPLEMENTATION.md  # This document
 ```

@@ -26,7 +26,7 @@ Execute the generation pipeline using FAL.ai and FFmpeg.
 3. crop-frames.ts                → outputs/frames/frame-{1-6}.png
 4. resize-frames.ts (OPTIONAL)   → outputs/frames/frame-{1-6}.png (resized)
 5. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
-6. stitch-videos.ts              → outputs/final/fashion-video.mp4
+6. stitch-videos-eased.ts        → outputs/final/fashion-video.mp4
 ```
 
 ## Directory Setup (Run First)
@@ -130,10 +130,18 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts \
 
 Generate videos via FAL.ai Kling 2.6 Pro.
 
+### Video Prompts
+
+Use the fixed prompts from `.claude/skills/editorial-photography/prompts/video.md`
+
+Each frame has a specific camera movement prompt. Copy the prompt exactly.
+
+### Command
+
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
-  --prompt "<VIDEO_PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
+  --prompt "<PROMPT_FROM_VIDEO.MD>" \
   --output outputs/videos/video-1.mp4 \
   --duration 5
 ```
@@ -141,7 +149,7 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--input` | Yes | - | Source frame image |
-| `--prompt` | Yes | - | Camera movement prompt from editorial-photography |
+| `--prompt` | Yes | - | Camera movement prompt (from video.md) |
 | `--output` | Yes | - | Output video path |
 | `--duration` | No | 5 | 5 or 10 seconds |
 
@@ -152,12 +160,12 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
 
 ---
 
-## Script: stitch-videos.ts
+## Script: stitch-videos-eased.ts
 
-Stitch videos with FFmpeg transitions (LOCAL - no API).
+Stitch videos with speed curves for invisible hard cuts (LOCAL - no API).
 
 ```bash
-npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts \
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --clips outputs/videos/video-1.mp4 \
   --clips outputs/videos/video-2.mp4 \
   --clips outputs/videos/video-3.mp4 \
@@ -165,20 +173,20 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts \
   --clips outputs/videos/video-5.mp4 \
   --clips outputs/videos/video-6.mp4 \
   --output outputs/final/fashion-video.mp4 \
-  --transition fade \
-  --easing smooth \
-  --transition-duration 1.2
+  --clip-duration 1.5 \
+  --easing dramaticSwoop
 ```
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--clips` | Yes | - | Input video files (multiple) |
 | `--output` | Yes | - | Output video path |
-| `--transition` | No | fade | Transition type |
-| `--easing` | No | smooth | Easing curve |
-| `--transition-duration` | No | 0.5 | Transition seconds |
+| `--clip-duration` | No | 1.5 | Output duration per clip (seconds) |
+| `--easing` | No | easeInOutSine | Easing curve (dramaticSwoop, cinematic, etc.) |
+| `--output-fps` | No | 60 | Output frame rate |
+| `--keep-temp` | No | false | Keep temporary frames for debugging |
 
-**Recommended:** `--transition fade --easing smooth --transition-duration 1.2`
+**Recommended:** `--clip-duration 1.5 --easing dramaticSwoop`
 
 **Errors:**
 - `ffmpeg not found` → Install with `brew install ffmpeg`

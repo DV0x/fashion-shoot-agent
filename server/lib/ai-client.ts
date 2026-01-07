@@ -124,10 +124,10 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
     };
   }
 
-  // Detect final video creation (from stitch-videos.ts OR raw ffmpeg OR TaskOutput from background task)
+  // Detect final video creation (from stitch-videos-eased.ts OR raw ffmpeg OR TaskOutput from background task)
   // IMPORTANT: Check this BEFORE clips to prevent stitch output (which contains video-*.mp4 inputs)
   // from triggering clips checkpoint instead of complete
-  const hasStitchScript = command.includes('stitch-videos.ts');
+  const hasStitchScript = command.includes('stitch-videos-eased.ts');
   const hasFashionVideoInOutput = output.includes('fashion-video.mp4');
   const hasFFmpeg = command.includes('ffmpeg');
   const hasFashionVideoInCommand = command.includes('outputs/final/fashion-video.mp4');

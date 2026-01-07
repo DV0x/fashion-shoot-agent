@@ -2,8 +2,7 @@
  * video-utils.ts
  *
  * Shared video utilities for the fashion-shoot-pipeline scripts.
- * Consolidates duplicated code from apply-speed-curve.ts, stitch-videos-eased.ts,
- * and stitch-videos.ts.
+ * Consolidates duplicated code from apply-speed-curve.ts and stitch-videos-eased.ts.
  */
 
 import { execSync } from "child_process";

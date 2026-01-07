@@ -49,7 +49,7 @@ AI-powered fashion photoshoot generator built on the **Claude Agent SDK**. Trans
 │  │  │ • Prompt templates      │───▶│ • generate-image.ts  (FAL.ai)       │  │   │
 │  │  │ • 7 pose presets        │    │ • crop-frames.ts     (OpenCV+Sharp) │  │   │
 │  │  │ • 7 background presets  │    │ • generate-video.ts  (FAL.ai Kling) │  │   │
-│  │  │ • 6 camera angles       │    │ • stitch-videos.ts   (FFmpeg)       │  │   │
+│  │  │ • 6 camera angles       │    │ • stitch-videos-eased.ts (FFmpeg)   │  │   │
 │  │  └─────────────────────────┘    └─────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -294,7 +294,7 @@ Executes generation scripts:
 | `generate-image.ts` | FAL.ai nano-banana-pro | Hero + contact sheet |
 | `crop-frames.ts` | OpenCV.js + Sharp | Extract 6 frames from grid (hybrid detection) |
 | `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
-| `stitch-videos.ts` | FFmpeg xfade | Combine with transitions |
+| `stitch-videos-eased.ts` | FFmpeg | Combine with speed curves |
 
 #### crop-frames.ts - Adaptive Variance-Based Grid Detection + Normalization
 
@@ -343,9 +343,9 @@ This ensures all frames have identical dimensions before video generation, elimi
 
 Supports resizing frames to different aspect ratios (9:16, 16:9, 1:1, etc.). Uses temp file + atomic rename for in-place updates when input/output directories match—works in sandboxed containers.
 
-#### stitch-videos.ts - Auto-Scaling
+#### stitch-videos-eased.ts - Speed Curves
 
-Automatically normalizes all input videos to the same dimensions before applying xfade transitions. Handles resolution mismatches when individual frames are regenerated (e.g., user edits frame-6). Uses shared `buildScaleFilter()` from `lib/video-utils.ts` to avoid cropping.
+Stitches videos using speed curves (slow-fast-slow) for invisible hard cuts. Automatically normalizes all input videos to the same dimensions. Uses shared libraries from `lib/` for timestamp calculation and frame extraction.
 
 #### Shared Libraries (`scripts/lib/`)
 
@@ -357,7 +357,7 @@ The speed curve scripts share common functionality through three libraries:
 | `video-utils.ts` | FFmpeg operations: `getVideoMetadata()`, `buildScaleFilter()`, `encodeFramesToVideo()`, `extractFramesAtTimestamps()`, `findMaxDimensions()` |
 | `timestamp-calc.ts` | Speed curve algorithm: `calculateSourceTimestamps()`, `getSampleTimestamps()` |
 
-This eliminates code duplication across `apply-speed-curve.ts`, `stitch-videos-eased.ts`, and `stitch-videos.ts`.
+This eliminates code duplication across `apply-speed-curve.ts` and `stitch-videos-eased.ts`.
 
 **Timestamp Clamping (2026-01-07 Fix):** The `calculateSourceTimestamps()` function accepts an optional `inputFps` parameter to calculate the maximum seekable timestamp. Video containers report duration slightly longer than the last frame (e.g., 5.04s duration but last frame at 5.0s for 24fps). Without this clamping, FFmpeg silently fails to extract frames near the video end, causing missing frames in the output.
 
@@ -399,7 +399,7 @@ Detection is checked in this order—first match wins:
 | 6 | `clips` | Bash contains `generate-video.ts` AND output contains `video-6.mp4` |
 | 7 | `clips` | TaskOutput contains `video-*.mp4` AND `retrieval_status>success` |
 
-**Why `complete` before `clips`?** When `stitch-videos.ts` runs, its output logs the input clips (`video-1.mp4`, etc.). If `clips` were checked first, stitch would incorrectly trigger the clips checkpoint instead of complete.
+**Why `complete` before `clips`?** When `stitch-videos-eased.ts` runs, its output logs the input clips (`video-1.mp4`, etc.). If `clips` were checked first, stitch would incorrectly trigger the clips checkpoint instead of complete.
 
 **Notes:**
 - The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). After resize, users review the resized frames before video generation continues.
@@ -542,7 +542,7 @@ if (consecutiveVideos.length >= 3) {
 
 Videos must be encoded with browser-compatible settings for web playback.
 
-### Required Settings (stitch-videos.ts)
+### Required Settings (stitch-videos-eased.ts)
 
 ```typescript
 .outputOptions([

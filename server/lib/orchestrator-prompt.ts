@@ -80,10 +80,10 @@ message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or re
 
 ### Phase 5: Stitch Final Video
 1. Parse user's stitch preferences:
-   - **Speed**: 1x (default), 1.25x, 1.5x, 2x
-   - **Loop**: yes/no (default: no) - adds transition from clip 6 back to clip 1
-2. Execute stitch-videos.ts with user preferences:
-   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos.ts --clips ... --speed {SPEED} [--loop]\`
+   - **Easing**: dramaticSwoop (default), easeInOutSine, cinematic, etc.
+   - **Clip duration**: 1.5s (default) - duration per clip in final video
+2. Execute stitch-videos-eased.ts with user preferences:
+   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts --clips ... --clip-duration 1.5 --easing dramaticSwoop\`
 3. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
 
 ## CHECKPOINT MODIFICATION HANDLING
