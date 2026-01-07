@@ -102,7 +102,11 @@ fashion-shoot-agent/
 │   │   │
 │   │   └── fashion-shoot-pipeline/ # Action skill
 │   │       ├── SKILL.md           # Pipeline documentation
-│   │       └── scripts/           # 4 generation scripts
+│   │       └── scripts/           # Generation scripts
+│   │           ├── lib/           # Shared libraries
+│   │           │   ├── easing-functions.ts  # Pure math easing
+│   │           │   ├── video-utils.ts       # FFmpeg utilities
+│   │           │   └── timestamp-calc.ts    # Speed curve algorithm
 │   │
 │   └── outputs/                    # Generated assets
 │       ├── hero.png               # Full-body hero shot
@@ -292,12 +296,12 @@ Executes generation scripts:
 | `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
 | `stitch-videos.ts` | FFmpeg xfade | Combine with transitions |
 
-#### crop-frames.ts - Adaptive Variance-Based Grid Detection
+#### crop-frames.ts - Adaptive Variance-Based Grid Detection + Normalization
 
-Auto-detects grid structure from contact sheets using variance-based gutter detection. Works with any gutter color (white, black, gray) and adapts to AI-generated layouts.
+Auto-detects grid structure from contact sheets using variance-based gutter detection. Works with any gutter color (white, black, gray) and adapts to AI-generated layouts. **Includes automatic frame normalization** to ensure all cropped frames have uniform dimensions.
 
 ```
-Contact Sheet → Grayscale → Variance Profile → Adaptive Threshold → Find Uniform Regions → Per-Cell Boundaries
+Contact Sheet → Grayscale → Variance Profile → Adaptive Threshold → Find Uniform Regions → Per-Cell Boundaries → Normalize Frames
 ```
 
 **Algorithm:**
@@ -326,13 +330,33 @@ Contact Sheet → Grayscale → Variance Profile → Adaptive Threshold → Find
 
 **Zero AI tokens** - Pure math approach, works with any contact sheet layout.
 
+**Frame Normalization:**
+After cropping, frames may have slightly varying dimensions due to AI-generated grid inconsistencies. The normalization step:
+1. Finds max width and max height across all cropped frames
+2. Resizes each frame to uniform dimensions using `sharp.resize()` with `fit: 'contain'`
+3. Adds black padding to maintain aspect ratio (letterbox/pillarbox)
+4. Can be disabled with `--no-normalize` flag
+
+This ensures all frames have identical dimensions before video generation, eliminating the need for scaling during video stitching.
+
 #### resize-frames.ts - In-Place Updates
 
 Supports resizing frames to different aspect ratios (9:16, 16:9, 1:1, etc.). Uses temp file + atomic rename for in-place updates when input/output directories match—works in sandboxed containers.
 
 #### stitch-videos.ts - Auto-Scaling
 
-Automatically normalizes all input videos to the same dimensions before applying xfade transitions. Handles resolution mismatches when individual frames are regenerated (e.g., user edits frame-6). Uses `scale` + `pad` filters to avoid cropping.
+Automatically normalizes all input videos to the same dimensions before applying xfade transitions. Handles resolution mismatches when individual frames are regenerated (e.g., user edits frame-6). Uses shared `buildScaleFilter()` from `lib/video-utils.ts` to avoid cropping.
+
+#### Shared Libraries (`scripts/lib/`)
+
+The speed curve scripts share common functionality through two libraries:
+
+| Library | Purpose |
+|---------|---------|
+| `video-utils.ts` | FFmpeg operations: `getVideoMetadata()`, `buildScaleFilter()`, `encodeFramesToVideo()`, `extractFramesAtTimestamps()`, `findMaxDimensions()` |
+| `timestamp-calc.ts` | Speed curve algorithm: `calculateSourceTimestamps()`, `getSampleTimestamps()` |
+
+This eliminates code duplication across `apply-speed-curve.ts`, `stitch-videos-eased.ts`, and `stitch-videos.ts`.
 
 ---
 

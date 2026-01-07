@@ -1,8 +1,9 @@
 # Speed Curves & Video Stitching Implementation
 
-**Date:** 2026-01-06
+**Date:** 2026-01-07 (Updated)
 **Project:** fashion-shoot-agent
 **Inspired by:** [easy-peasy-ease](https://github.com/...)
+**Last Refactor:** Extracted shared libraries (`video-utils.ts`, `timestamp-calc.ts`)
 
 ---
 
@@ -138,8 +139,10 @@ Video 1: [===FAST====>slow] CUT [slow<====FAST====]  :Video 2
 agent/.claude/skills/fashion-shoot-pipeline/
 ├── SKILL.md                          # Pipeline documentation
 ├── scripts/
-│   ├── lib/
-│   │   └── easing-functions.ts       # Pure math easing functions
+│   ├── lib/                          # Shared libraries
+│   │   ├── easing-functions.ts       # Pure math easing functions
+│   │   ├── video-utils.ts            # FFmpeg utilities (extract, encode, scale)
+│   │   └── timestamp-calc.ts         # Speed curve timestamp algorithm
 │   ├── apply-speed-curve.ts          # Apply easing to single video
 │   ├── stitch-videos-eased.ts        # Combine videos with hard cuts
 │   └── stitch-videos.ts              # Original FFmpeg xfade version
@@ -151,7 +154,17 @@ agent/.claude/skills/fashion-shoot-pipeline/
 
 ## Core Components
 
-### 1. Easing Functions (`lib/easing-functions.ts`)
+### 1. Shared Libraries (`lib/`)
+
+The speed curve implementation uses three shared libraries to eliminate code duplication:
+
+| Library | Lines | Purpose |
+|---------|-------|---------|
+| `easing-functions.ts` | ~200 | Pure math easing functions |
+| `video-utils.ts` | ~290 | FFmpeg operations (metadata, extract, encode, scale) |
+| `timestamp-calc.ts` | ~180 | Speed curve timestamp calculation algorithm |
+
+### 2. Easing Functions (`lib/easing-functions.ts`)
 
 Pure mathematical functions with **zero dependencies**. Each function maps normalized time (0→1) to normalized progress (0→1).
 
@@ -178,7 +191,53 @@ const easeInOutSine = (t: number): number =>
 | **Bezier Presets** | `ease`, `easeIn`, `easeOut`, `easeInOut`, `dramaticSwoop`, `gentleSwoop`, `cinematic`, `luxurious` |
 | **Hybrid** | `easeInExpoOutCubic`, `easeInQuartOutQuad`, `easeInCircOutQuad` |
 
-### 2. Cubic Bezier Support
+### 3. Video Utils (`lib/video-utils.ts`)
+
+Shared FFmpeg operations used by all speed curve scripts:
+
+```typescript
+// Get video metadata (duration, resolution, fps)
+export async function getVideoMetadata(inputPath: string): Promise<VideoMetadata>
+
+// Build FFmpeg scale filter with padding
+export function buildScaleFilter(width: number, height: number, padColor?: string): string
+
+// Extract frames at specific timestamps
+export async function extractFramesAtTimestamps(options: ExtractFramesBatchOptions): Promise<number>
+
+// Encode frames to video
+export async function encodeFramesToVideo(options: EncodeOptions): Promise<void>
+
+// Find max dimensions across multiple videos
+export async function findMaxDimensions(videoPaths: string[]): Promise<{width, height}>
+```
+
+### 4. Timestamp Calculation (`lib/timestamp-calc.ts`)
+
+The core speed curve algorithm extracted for reuse:
+
+```typescript
+export function calculateSourceTimestamps(options: {
+  easingFunc: EasingFunction;
+  inputDuration: number;
+  outputDuration: number;
+  outputFps: number;
+}): TimestampCalculationResult {
+  const totalFrames = Math.floor(outputDuration * outputFps);
+  const timestamps: number[] = [];
+
+  for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+    const outputProgress = totalFrames > 1 ? frameIndex / (totalFrames - 1) : 0;
+    const sourceProgress = easingFunc(outputProgress);
+    const sourceTime = sourceProgress * inputDuration;
+    timestamps.push(sourceTime);
+  }
+
+  return { timestamps, totalFrames, compressionRatio: inputDuration / outputDuration };
+}
+```
+
+### 5. Cubic Bezier Support
 
 Create custom CSS-compatible easing curves:
 
@@ -192,26 +251,26 @@ const dramaticSwoop = createBezierEasing(0.85, 0, 0.15, 1);
 const myEasing = createBezierEasing(0.7, 0, 0.3, 1);
 ```
 
-### 3. Apply Speed Curve (`apply-speed-curve.ts`)
+### 6. Apply Speed Curve (`apply-speed-curve.ts`)
 
-Transforms a single video using easing-based speed manipulation.
+Transforms a single video using easing-based speed manipulation. Uses shared libraries for all FFmpeg operations.
 
 **Process:**
-1. Probe video metadata (duration, resolution, fps)
-2. Calculate source timestamps using easing function
-3. Extract frames at calculated timestamps via FFmpeg
-4. Re-encode frames at constant output framerate
+1. Probe video metadata via `getVideoMetadata()`
+2. Calculate source timestamps via `calculateSourceTimestamps()`
+3. Extract frames via `extractFramesAtTimestamps()`
+4. Re-encode frames via `encodeFramesToVideo()`
 
-### 4. Stitch Videos Eased (`stitch-videos-eased.ts`)
+### 7. Stitch Videos Eased (`stitch-videos-eased.ts`)
 
-Combines multiple speed-curved videos with hard cuts.
+Combines multiple speed-curved videos with hard cuts. Uses shared libraries with `scaleWithPadding: true` for auto-scaling.
 
 **Process:**
 1. Validate all input clips exist
-2. Analyze clips to find target dimensions
-3. For each clip: calculate timestamps, extract frames
-4. Auto-scale all frames to uniform resolution
-5. Encode combined frames into final video
+2. Find max dimensions via `findMaxDimensions()`
+3. For each clip: calculate timestamps via `calculateSourceTimestamps()`
+4. Extract frames via `extractFramesAtTimestamps()` with auto-scaling
+5. Encode combined frames via `encodeFramesToVideo()`
 
 ---
 
@@ -536,3 +595,4 @@ scale=W:H:force_original_aspect_ratio=decrease,pad=W:H:...
 ---
 
 *Document generated: 2026-01-06*
+*Last updated: 2026-01-07 (shared libraries refactor)*
