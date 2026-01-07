@@ -349,14 +349,17 @@ Automatically normalizes all input videos to the same dimensions before applying
 
 #### Shared Libraries (`scripts/lib/`)
 
-The speed curve scripts share common functionality through two libraries:
+The speed curve scripts share common functionality through three libraries:
 
 | Library | Purpose |
 |---------|---------|
+| `easing-functions.ts` | Pure math easing functions (30+ presets + custom Bezier) |
 | `video-utils.ts` | FFmpeg operations: `getVideoMetadata()`, `buildScaleFilter()`, `encodeFramesToVideo()`, `extractFramesAtTimestamps()`, `findMaxDimensions()` |
 | `timestamp-calc.ts` | Speed curve algorithm: `calculateSourceTimestamps()`, `getSampleTimestamps()` |
 
 This eliminates code duplication across `apply-speed-curve.ts`, `stitch-videos-eased.ts`, and `stitch-videos.ts`.
+
+**Timestamp Clamping (2026-01-07 Fix):** The `calculateSourceTimestamps()` function accepts an optional `inputFps` parameter to calculate the maximum seekable timestamp. Video containers report duration slightly longer than the last frame (e.g., 5.04s duration but last frame at 5.0s for 24fps). Without this clamping, FFmpeg silently fails to extract frames near the video end, causing missing frames in the output.
 
 ---
 

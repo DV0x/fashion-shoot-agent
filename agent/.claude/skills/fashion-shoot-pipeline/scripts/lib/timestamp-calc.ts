@@ -23,6 +23,8 @@ export interface TimestampCalculationOptions {
   outputDuration: number;
   /** Output frame rate (fps) */
   outputFps: number;
+  /** Input video frame rate (fps) - used to calculate max seekable time */
+  inputFps?: number;
 }
 
 export interface TimestampCalculationResult {
@@ -59,10 +61,16 @@ export interface TimestampCalculationResult {
 export function calculateSourceTimestamps(
   options: TimestampCalculationOptions
 ): TimestampCalculationResult {
-  const { easingFunc, inputDuration, outputDuration, outputFps } = options;
+  const { easingFunc, inputDuration, outputDuration, outputFps, inputFps } = options;
 
   const totalFrames = Math.floor(outputDuration * outputFps);
   const timestamps: number[] = [];
+
+  // Calculate the maximum seekable timestamp
+  // The last frame of a video at N fps is at (totalFrames-1)/fps seconds
+  // If inputFps not provided, use conservative 24fps assumption
+  const frameInterval = 1 / (inputFps || 24);
+  const maxSeekableTime = inputDuration - frameInterval;
 
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     // Normalize frame index to 0-1 range (output progress)
@@ -74,10 +82,10 @@ export function calculateSourceTimestamps(
     const sourceProgress = easingFunc(outputProgress);
 
     // Map to source timestamp, clamped to valid range
-    // Subtract tiny amount to avoid seeking past end of video
+    // Use maxSeekableTime to ensure we don't seek past the last frame
     const sourceTime = Math.max(
       0,
-      Math.min(sourceProgress * inputDuration, inputDuration - 0.001)
+      Math.min(sourceProgress * inputDuration, maxSeekableTime)
     );
 
     timestamps.push(sourceTime);

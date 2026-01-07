@@ -127,6 +127,7 @@ async function applySpeedCurve(
     inputDuration: metadata.duration,
     outputDuration,
     outputFps,
+    inputFps: metadata.fps,
   });
 
   // Log sample timestamps to show the easing effect

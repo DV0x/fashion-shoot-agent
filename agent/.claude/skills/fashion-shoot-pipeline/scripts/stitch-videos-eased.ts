@@ -136,6 +136,7 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
         inputDuration: metadata.duration,
         outputDuration: clipDuration,
         outputFps,
+        inputFps: metadata.fps,
       });
 
       // Extract frames with global frame numbering and auto-scaling

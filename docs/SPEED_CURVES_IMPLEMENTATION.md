@@ -1,6 +1,6 @@
 # Speed Curves & Video Stitching Implementation
 
-**Date:** 2026-01-07 (Updated)
+**Date:** 2026-01-07 (Updated - Timestamp Clamping Fix)
 **Project:** fashion-shoot-agent
 **Inspired by:** [easy-peasy-ease](https://github.com/...)
 **Last Refactor:** Extracted shared libraries (`video-utils.ts`, `timestamp-calc.ts`)
@@ -222,20 +222,29 @@ export function calculateSourceTimestamps(options: {
   inputDuration: number;
   outputDuration: number;
   outputFps: number;
+  inputFps?: number;  // Added for proper timestamp clamping
 }): TimestampCalculationResult {
   const totalFrames = Math.floor(outputDuration * outputFps);
   const timestamps: number[] = [];
 
+  // Calculate max seekable time based on source video fps
+  // The last frame is at (duration - 1/fps), not at duration
+  const frameInterval = 1 / (inputFps || 24);
+  const maxSeekableTime = inputDuration - frameInterval;
+
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     const outputProgress = totalFrames > 1 ? frameIndex / (totalFrames - 1) : 0;
     const sourceProgress = easingFunc(outputProgress);
-    const sourceTime = sourceProgress * inputDuration;
+    // Clamp to maxSeekableTime to avoid seeking past last frame
+    const sourceTime = Math.min(sourceProgress * inputDuration, maxSeekableTime);
     timestamps.push(sourceTime);
   }
 
   return { timestamps, totalFrames, compressionRatio: inputDuration / outputDuration };
 }
 ```
+
+**Important:** The `inputFps` parameter ensures timestamps don't exceed the last seekable frame. Video containers report duration slightly longer than the last frame timestamp (e.g., 5.04s duration but last frame at 5.0s for 24fps). Without proper clamping, FFmpeg silently fails to extract frames near the end.
 
 ### 5. Cubic Bezier Support
 
@@ -558,6 +567,28 @@ ffmpeg -y -framerate 60 -i frame_%06d.png \
 ---
 
 ## Troubleshooting
+
+### Missing Frames / Only First Clip Appears
+
+**Symptom:** Script reports 100% extraction for all clips, but output video only shows first clip or is shorter than expected.
+
+**Cause:** FFmpeg returns exit code 0 but creates no output when seeking past the last video frame. Video duration (e.g., 5.04s) is slightly longer than the last seekable frame timestamp (e.g., 5.0s at 24fps).
+
+**Solution:** Pass `inputFps` to `calculateSourceTimestamps()` so it can calculate the correct max seekable time:
+```typescript
+const { timestamps } = calculateSourceTimestamps({
+  easingFunc,
+  inputDuration: metadata.duration,
+  outputDuration: clipDuration,
+  outputFps,
+  inputFps: metadata.fps,  // Critical for proper clamping
+});
+```
+
+**Debug:** Check actual frame count vs expected:
+```bash
+ls outputs/final/.temp_stitch_*/ | wc -l  # Should match expected frames
+```
 
 ### Visible Jump Cuts
 
