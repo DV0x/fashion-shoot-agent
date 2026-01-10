@@ -140,17 +140,17 @@ fashion-shoot-agent/
 ## Pipeline Flow
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   ANALYZE   │────▶│    HERO     │────▶│   FRAMES    │────▶│   CLIPS     │────▶│   STITCH    │
-│  Reference  │     │ CHECKPOINT 1│     │ CHECKPOINT 2│     │ CHECKPOINT 3│     │   (auto)    │
-│   images    │     │  2K, 3:2    │     │  6 × 1K     │     │  6 × 5sec   │     │   ~24sec    │
-└─────────────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └─────────────┘
-                          │                   │                   │
-                     [User Review]       [User Review]       [User Review]
-                     ├── Modify          ├── Modify frame    ├── Regenerate clip
-                     └── Continue        ├── Resize ratio    ├── Choose speed
-                                         └── Continue        ├── Enable loop
-                                                             └── Continue
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   ANALYZE   │────▶│    HERO     │────▶│CONTACT SHEET│────▶│   FRAMES    │────▶│   CLIPS     │────▶│   STITCH    │
+│  Reference  │     │ CHECKPOINT 1│     │ CHECKPOINT 2│     │ CHECKPOINT 3│     │ CHECKPOINT 4│     │   (auto)    │
+│   images    │     │  2K, 3:2    │     │  2K, 3:2    │     │  6 × 1K     │     │  6 × 5sec   │     │   ~24sec    │
+└─────────────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └─────────────┘
+                          │                   │                   │                   │
+                     [User Review]       [User Review]       [User Review]       [User Review]
+                     ├── Modify          ├── Modify          ├── Modify frame    ├── Regenerate clip
+                     └── Continue        └── Continue        ├── Resize ratio    ├── Choose speed
+                                                             └── Continue        ├── Enable loop
+                                                                                 └── Continue
 ```
 
 **The 6 Camera Angles (Fixed):**
@@ -267,7 +267,27 @@ Create (UUID) → Get SDK ID → Add Messages → Update Pipeline → Complete/E
 - Hourly cleanup interval
 
 **Pipeline States:**
-`initialized` → `analyzing` → `generating-hero` → `generating-contact-sheet` → `isolating-frames` → `generating-videos` → `stitching` → `completed`
+`initialized` → `analyzing` → `generating-hero` → `generating-contact-sheet` → `cropping-frames` → `generating-videos` → `stitching` → `completed`
+
+---
+
+## Image Handling
+
+Images are handled by file path reference, not base64 encoding:
+
+| Method | Size Limit | When Used |
+|--------|------------|-----------|
+| File path to FAL.ai | No limit | `generate-image.ts --input` |
+| Read tool | No practical limit | Agent views generated images |
+| Base64 multimodal | 5MB | **Not used** (removed 2026-01-10) |
+
+**Upload Flow:**
+1. User uploads image → saved to `/uploads/`
+2. File path included in prompt text
+3. Agent passes path to `generate-image.ts --input` (FAL.ai handles it)
+4. Agent can use Read tool to view images if needed
+
+This approach avoids Claude's 5MB base64 limit for multimodal inputs.
 
 ---
 
@@ -292,9 +312,10 @@ Executes generation scripts:
 | Script | API | Purpose |
 |--------|-----|---------|
 | `generate-image.ts` | FAL.ai nano-banana-pro | Hero + contact sheet |
-| `crop-frames.ts` | OpenCV.js + Sharp | Extract 6 frames from grid (hybrid detection) |
+| `crop-frames.ts` | OpenCV.js + Sharp | Extract 6 frames from grid (variance-based detection) |
+| `crop-frames-ffmpeg.ts` | FFmpeg | Fallback: simple math division (100% reliable) |
 | `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
-| `stitch-videos-eased.ts` | FFmpeg | Combine with speed curves |
+| `stitch-videos-eased.ts` | FFmpeg | Combine with speed curves (smart dimension check) |
 
 #### crop-frames.ts - Adaptive Variance-Based Grid Detection + Normalization
 
@@ -339,13 +360,35 @@ After cropping, frames may have slightly varying dimensions due to AI-generated 
 
 This ensures all frames have identical dimensions before video generation, eliminating the need for scaling during video stitching.
 
+#### crop-frames-ffmpeg.ts - FFmpeg Fallback (100% Reliable)
+
+When `crop-frames.ts` fails due to gutter detection issues (minimal/no gutters in AI-generated contact sheets), this fallback uses simple math division:
+
+```
+Image dimensions ÷ grid = Frame dimensions
+
+2528×1696 ÷ (3×2) = 842×848 per frame
+```
+
+**Algorithm:**
+1. Get image dimensions via FFprobe
+2. Divide width by cols, height by rows
+3. Crop each frame using FFmpeg `crop` filter
+4. Output uniform dimensions (no normalization needed)
+
+**Why it works:** Skips gutter detection entirely. Any gutter remnants are distributed into frames but are barely noticeable. Contact sheets are always 2K resolution (2528×1696), so frame output is consistent (842×848).
+
+**Usage:** Agent tries `crop-frames.ts` first. If it fails, agent automatically uses `crop-frames-ffmpeg.ts` as documented in SKILL.md.
+
 #### resize-frames.ts - In-Place Updates
 
 Supports resizing frames to different aspect ratios (9:16, 16:9, 1:1, etc.). Uses temp file + atomic rename for in-place updates when input/output directories match—works in sandboxed containers.
 
 #### stitch-videos-eased.ts - Speed Curves
 
-Stitches videos using speed curves (slow-fast-slow) for invisible hard cuts. Automatically normalizes all input videos to the same dimensions. Uses shared libraries from `lib/` for timestamp calculation and frame extraction.
+Stitches videos using speed curves (slow-fast-slow) for invisible hard cuts. Uses shared libraries from `lib/` for timestamp calculation and frame extraction.
+
+**Smart Dimension Checking:** Skips scaling when all input clips already have uniform dimensions (optimization added 2026-01-10). Only applies `scaleWithPadding` filter when dimensions differ.
 
 #### Shared Libraries (`scripts/lib/`)
 
@@ -392,16 +435,18 @@ Detection is checked in this order—first match wins:
 | Order | Checkpoint | Trigger Condition |
 |-------|------------|-------------------|
 | 1 | `hero` | Bash contains `generate-image.ts` AND output contains `outputs/hero.png` |
-| 2 | `frames` | Bash contains `generate-image.ts` AND output contains `outputs/frames/frame-` |
-| 3 | `frames` | Bash contains `crop-frames.ts` AND output contains `frame-6.png` |
-| 4 | `frames` | Bash contains `resize-frames.ts` AND output contains `"success": true` |
-| 5 | `complete` | Bash/TaskOutput contains `fashion-video.mp4` (stitch output) |
-| 6 | `clips` | Bash contains `generate-video.ts` AND output contains `video-6.mp4` |
-| 7 | `clips` | TaskOutput contains `video-*.mp4` AND `retrieval_status>success` |
+| 2 | `contact-sheet` | Bash contains `generate-image.ts` AND output contains `outputs/contact-sheet.png` |
+| 3 | `frames` | Bash contains `generate-image.ts` AND output contains `outputs/frames/frame-` |
+| 4 | `frames` | Bash contains `crop-frames.ts` AND output contains `frame-6.png` |
+| 5 | `frames` | Bash contains `resize-frames.ts` AND output contains `"success": true` |
+| 6 | `complete` | Bash/TaskOutput contains `fashion-video.mp4` (stitch output) |
+| 7 | `clips` | Bash contains `generate-video.ts` AND output contains `video-6.mp4` |
+| 8 | `clips` | TaskOutput contains `video-*.mp4` AND `retrieval_status>success` |
 
 **Why `complete` before `clips`?** When `stitch-videos-eased.ts` runs, its output logs the input clips (`video-1.mp4`, etc.). If `clips` were checked first, stitch would incorrectly trigger the clips checkpoint instead of complete.
 
 **Notes:**
+- The `contact-sheet` checkpoint triggers after the 2×3 grid is generated, allowing users to review before frame extraction via `crop-frames.ts`.
 - The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). After resize, users review the resized frames before video generation continues.
 - Multi-frame editing is supported: users can say "modify frames 2 and 3", "modify frames 1-4", or "modify all frames".
 - The `clips` checkpoint triggers after all 6 video clips are generated, allowing users to review clips, choose playback speed, enable loop, or regenerate specific clips before stitching.
@@ -491,7 +536,7 @@ Server                                    Frontend (useStreamingGenerate)
 | `thinking` | Intermediate message with tool_use (collapsible) | `ThinkingMessage` |
 | `image` | Generated image artifact | `ImageMessage` / `ImageGrid` |
 | `video` | Generated video artifact | `VideoMessage` / `VideoGrid` |
-| `checkpoint` | Pipeline checkpoint with actions | `CheckpointMessage` |
+| `checkpoint` | Pipeline checkpoint with actions (hero, contact-sheet, frames, clips, complete) | `CheckpointMessage` |
 | `progress` | Progress indicator | `ProgressMessage` |
 
 ### Thinking vs Response Detection
@@ -618,7 +663,7 @@ PORT=3002                      # Optional
 | Image Grid | ✅ Complete | Auto-grouping 3+ consecutive images |
 | Video Grid | ✅ Complete | Auto-grouping 3+ consecutive videos (clips) |
 | Video Playback | ✅ Complete | H.264 yuv420p encoding |
-| Checkpoint UI | ✅ Complete | Hero, frames, clips, complete stages |
+| Checkpoint UI | ✅ Complete | Hero, contact-sheet, frames, clips, complete stages |
 
 **Remaining:**
 - Preset selection UI (partial)

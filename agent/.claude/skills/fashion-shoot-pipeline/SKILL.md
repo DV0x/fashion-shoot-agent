@@ -21,9 +21,9 @@ Execute the generation pipeline using FAL.ai and FFmpeg.
 ## Pipeline Execution Order
 
 ```
-1. generate-image.ts (HERO)      → outputs/hero.png
-2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png
-3. crop-frames.ts                → outputs/frames/frame-{1-6}.png
+1. generate-image.ts (HERO)      → outputs/hero.png           [CHECKPOINT]
+2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png  [CHECKPOINT]
+3. crop-frames.ts                → outputs/frames/frame-{1-6}.png  [CHECKPOINT]
 4. resize-frames.ts (OPTIONAL)   → outputs/frames/frame-{1-6}.png (resized)
 5. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
 6. stitch-videos-eased.ts        → outputs/final/fashion-video.mp4
@@ -66,14 +66,12 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts \
 
 ## Script: crop-frames.ts
 
-Crop contact sheet into individual frames (LOCAL - no API).
+Crop contact sheet into individual frames (LOCAL - no API). Auto-detects grid gutters using variance-based detection.
 
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts \
   --input outputs/contact-sheet.png \
-  --output-dir outputs/frames/ \
-  --rows 2 \
-  --cols 3
+  --output-dir outputs/frames/
 ```
 
 | Option | Required | Default | Description |
@@ -82,16 +80,38 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts \
 | `--output-dir` | Yes | - | Output directory for frames |
 | `--rows` | No | 2 | Grid rows |
 | `--cols` | No | 3 | Grid columns |
-| `--gutter-x` | No | auto | Horizontal gap pixels (auto-detected if not specified) |
-| `--gutter-y` | No | auto | Vertical gap pixels (auto-detected if not specified) |
 
-**Output:** `frame-1.png` through `frame-6.png`
+**Output:** `frame-1.png` through `frame-6.png` (auto-normalized to uniform dimensions)
 
-**Note:** The script auto-detects gutter sizes using edge detection. Manual values can be provided if needed.
+**Features:**
+- Auto-detects gutter sizes using variance-based detection
+- Normalizes all frames to identical dimensions
+- Works with any gutter color (white, black, gray)
+- Zero API calls - pure local processing
 
 **Errors:**
 - `Input not found` → Check contact-sheet.png exists
-- `Invalid dimensions` → Try manual gutter values
+- `Gutter detection failed` → **Use fallback script below**
+
+### Fallback: crop-frames-ffmpeg.ts
+
+**If `crop-frames.ts` fails** (gutter detection error), use the FFmpeg fallback which uses simple math division:
+
+```bash
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames-ffmpeg.ts \
+  --input outputs/contact-sheet.png \
+  --output-dir outputs/frames/
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--input` | Yes | - | Contact sheet image path |
+| `--output-dir` | Yes | - | Output directory for frames |
+| `--cols` | No | 3 | Grid columns |
+| `--rows` | No | 2 | Grid rows |
+| `--padding` | No | 0 | Pixels to trim from each frame edge |
+
+**Why this works:** Divides the image mathematically (width÷3, height÷2) without gutter detection. 100% reliable for any contact sheet.
 
 ---
 
