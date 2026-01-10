@@ -19,6 +19,7 @@ export function CheckpointMessage({ message, onContinue }: CheckpointMessageProp
 
   const stageLabels: Record<string, string> = {
     hero: 'Hero Image Ready',
+    'contact-sheet': 'Contact Sheet Preview',
     frames: 'Frames Ready',
     clips: 'Video Clips Ready',
     complete: 'Pipeline Complete',
@@ -26,7 +27,8 @@ export function CheckpointMessage({ message, onContinue }: CheckpointMessageProp
 
   const stageIcons: Record<string, string> = {
     hero: '📸',
-    frames: '🎞️',
+    'contact-sheet': '🎞️',
+    frames: '🖼️',
     clips: '🎥',
     complete: '🎬',
   };

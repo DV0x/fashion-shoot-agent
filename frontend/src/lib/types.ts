@@ -34,9 +34,9 @@ export type PipelineStage =
   | 'error';
 
 export interface Checkpoint {
-  stage: 'hero' | 'frames' | 'clips' | 'complete';
+  stage: 'hero' | 'contact-sheet' | 'frames' | 'clips' | 'complete';
   status: 'complete' | 'pending';
-  artifact?: string;         // Single artifact (hero, final video)
+  artifact?: string;         // Single artifact (hero, contact-sheet, final video)
   artifacts?: string[];      // Multiple artifacts (frames, clips)
   message: string;
 }

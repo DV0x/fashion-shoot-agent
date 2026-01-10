@@ -50,12 +50,24 @@ message: Hero image ready. Reply "continue" or describe changes.
 ---END CHECKPOINT---
 \`\`\`
 
-### Phase 3: Contact Sheet + Frames → CHECKPOINT 2
+### Phase 3: Contact Sheet → CHECKPOINT 2
 1. Read \`prompts/contact-sheet.md\` from editorial-photography skill
 2. Fill {STYLE_DETAILS} based on glasses presence
 3. Execute generate-image.ts with hero.png → outputs/contact-sheet.png
-4. Execute crop-frames.ts → outputs/frames/frame-{1-6}.png
-5. Output checkpoint and STOP:
+4. Output checkpoint and STOP:
+\`\`\`
+---CHECKPOINT---
+stage: contact-sheet
+status: complete
+artifact: outputs/contact-sheet.png
+message: Contact sheet preview ready. Reply "continue" to extract frames or describe changes.
+---END CHECKPOINT---
+\`\`\`
+
+### Phase 4: Frames → CHECKPOINT 3
+1. Execute crop-frames.ts to extract frames from contact sheet:
+   \`cd agent && npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts --input outputs/contact-sheet.png --output-dir outputs/frames/\`
+2. Output checkpoint and STOP:
 \`\`\`
 ---CHECKPOINT---
 stage: frames
@@ -65,7 +77,7 @@ message: 6 frames ready. Reply "continue" or request modifications.
 ---END CHECKPOINT---
 \`\`\`
 
-### Phase 4: Video Clips → CHECKPOINT 3
+### Phase 5: Video Clips → CHECKPOINT 4
 1. Read \`prompts/video.md\` from editorial-photography skill (6 different prompts)
 2. Execute generate-video.ts for each frame (6 times, sequentially)
 3. Output checkpoint and STOP:
@@ -78,7 +90,7 @@ message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or re
 ---END CHECKPOINT---
 \`\`\`
 
-### Phase 5: Stitch Final Video
+### Phase 6: Stitch Final Video
 1. Parse user's stitch preferences:
    - **Easing**: dramaticSwoop (default), easeInOutSine, cinematic, etc.
    - **Clip duration**: 1.5s (default) - duration per clip in final video
@@ -92,13 +104,19 @@ message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or re
 User requests change → Re-activate editorial-photography skill, select new presets, regenerate hero.png
 → Show CHECKPOINT 1 again. Loop until user says "continue".
 
-### At Checkpoint 2 (Frames)
+### At Checkpoint 2 (Contact Sheet)
+User requests change → Re-generate contact sheet with new prompt modifications
+→ Show CHECKPOINT 2 again. Loop until user says "continue".
+
+**Continue** → Proceed to Phase 4 (crop frames)
+
+### At Checkpoint 3 (Frames)
 
 **Single frame modification** (e.g., "modify frame 3"):
 - Input: the specific frame file
 - Prompt: "Take this image and {USER_REQUEST}. Maintain fuji velvia style."
 - Output: same frame path (overwrites)
-→ Show CHECKPOINT 2 again with all 6 frames for review.
+→ Show CHECKPOINT 3 again with all 6 frames for review.
 
 **Multiple frame modification** (e.g., "modify frames 2 and 3", "modify frames 2, 4, 6", "modify frames 1-3"):
 - Parse frame numbers from user request (supports: "2 and 3", "2, 4, 6", "1-3", "all")
@@ -125,12 +143,12 @@ message: Frames resized to {RATIO}. Reply "continue" to generate videos or reque
 
 Loop until user says "continue".
 
-### At Checkpoint 3 (Clips)
+### At Checkpoint 4 (Clips)
 
 **Regenerate clip** (e.g., "regenerate clip 3", "redo video 5"):
 1. Re-read \`prompts/video.md\` for that specific frame's prompt
 2. Execute generate-video.ts for that frame only
-3. Show CHECKPOINT 3 again with all 6 clips
+3. Show CHECKPOINT 4 again with all 6 clips
 
 **Speed/loop selection** (e.g., "1.5x speed", "loop", "1.25x with loop"):
 - Parse preferences and proceed to Phase 5 (Stitch)
@@ -150,7 +168,7 @@ Loop until user says "continue".
 - ALWAYS use Skill tool to activate skills - never guess prompts or commands
 - ALWAYS pass ALL user reference images to hero generation
 - ALWAYS stop at checkpoints and wait for user input
-- crop-frames.ts auto-detects grid gutters - no flags needed
+- crop-frames.ts auto-detects grid gutters and normalizes frame dimensions
 - NEVER analyze or describe images - FAL.ai handles visual intelligence
 - NEVER skip the skill chain - editorial-photography THEN fashion-shoot-pipeline
 `;

@@ -5,24 +5,29 @@ import { readFileSync, existsSync } from 'fs';
 import { EventEmitter } from 'events';
 import { SessionManager } from './session-manager.js';
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator-prompt.js';
+import { createCheckpointDetector, type CheckpointDetector } from './checkpoint-detector.js';
+import type { WorkflowConfig } from './prompt-generator.js';
 
 // Checkpoint data structure
 export interface CheckpointData {
-  stage: 'hero' | 'frames' | 'clips' | 'complete';
+  stage: string;  // Dynamic stage names from workflow config
   status: 'complete' | 'error';
   artifact?: string;
   artifacts?: string[];
+  type?: 'image' | 'image-grid' | 'video' | 'video-grid';
   message: string;
+  isFinal?: boolean;
 }
 
 // Checkpoint event emitter for real-time notifications
 export const checkpointEmitter = new EventEmitter();
 
 /**
- * Detect checkpoint based on tool output
- * Triggers when specific artifacts are created
+ * Legacy checkpoint detection based on hardcoded patterns
+ * Kept for backwards compatibility when no workflow config is provided
+ * @deprecated Use config-driven checkpoint detection via CheckpointDetector
  */
-function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): CheckpointData | null {
+function detectCheckpointLegacy(toolName: string, toolInput: any, toolResponse: any): CheckpointData | null {
   // Check Bash tool results AND TaskOutput results (for background tasks)
   if (toolName !== 'Bash' && toolName !== 'TaskOutput') return null;
 
@@ -189,16 +194,30 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
 
 /**
  * Create PostToolUse hooks for checkpoint detection
+ * @param sessionId - The session ID for emitting checkpoint events
+ * @param detector - Optional config-driven checkpoint detector (uses legacy detection if not provided)
  */
-function createCheckpointHooks(sessionId: string) {
+function createCheckpointHooks(sessionId: string, detector?: CheckpointDetector | null) {
   return {
     PostToolUse: [{
       hooks: [async (input: any, _toolUseId: string | undefined, _options: { signal: AbortSignal }) => {
-        const checkpoint = detectCheckpoint(
-          input.tool_name,
-          input.tool_input,
-          input.tool_response
-        );
+        let checkpoint: CheckpointData | null = null;
+
+        if (detector) {
+          // Use config-driven detection
+          checkpoint = detector.detect(
+            input.tool_name,
+            input.tool_input,
+            input.tool_response
+          );
+        } else {
+          // Fallback to legacy detection (for backwards compatibility)
+          checkpoint = detectCheckpointLegacy(
+            input.tool_name,
+            input.tool_input,
+            input.tool_response
+          );
+        }
 
         if (checkpoint) {
           console.log(`⏸️  CHECKPOINT DETECTED: ${checkpoint.stage} - ${checkpoint.message}`);
@@ -346,24 +365,44 @@ export class AIClient {
   /**
    * Session-aware query with automatic session management
    * Supports multimodal input (text + images)
+   * @param prompt - The user prompt
+   * @param sessionId - Optional session ID
+   * @param metadata - Optional metadata including systemPrompt and workflowConfig
+   * @param imagePaths - Optional image paths for multimodal input
    */
-  async *queryWithSession(prompt: string, sessionId?: string, metadata?: any, imagePaths?: string[]) {
-    const session = await this.sessionManager.getOrCreateSession(sessionId, metadata);
+  async *queryWithSession(
+    prompt: string,
+    sessionId?: string,
+    metadata?: { systemPrompt?: string; workflowConfig?: WorkflowConfig },
+    imagePaths?: string[]
+  ) {
+    const session = await this.sessionManager.getOrCreateSession(sessionId);
     const resumeOptions = this.sessionManager.getResumeOptions(session.id);
     const abortController = new AbortController();
+
+    // Create checkpoint detector from workflow config if provided
+    const detector = metadata?.workflowConfig
+      ? createCheckpointDetector(metadata.workflowConfig)
+      : null;
+
+    // Use provided system prompt or fall back to default
+    const systemPrompt = metadata?.systemPrompt || this.defaultOptions.systemPrompt;
 
     const queryOptions = {
       ...this.defaultOptions,
       ...resumeOptions,
+      systemPrompt,  // Use dynamic or default system prompt
       includePartialMessages: true,  // Enable real-time token streaming
       abortController,
-      hooks: createCheckpointHooks(session.id)
+      hooks: createCheckpointHooks(session.id, detector)
     };
 
     console.log(`🔄 Query with session ${session.id}`, {
       hasResume: !!resumeOptions.resume,
       turnCount: session.turnCount,
-      imageCount: imagePaths?.length || 0
+      imageCount: imagePaths?.length || 0,
+      hasWorkflowConfig: !!metadata?.workflowConfig,
+      workflowId: metadata?.workflowConfig?.id || 'default'
     });
 
     try {

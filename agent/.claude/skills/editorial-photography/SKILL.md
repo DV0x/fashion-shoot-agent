@@ -69,6 +69,8 @@ After selecting presets and filling prompt templates:
 2. **Next:** Use Skill tool → `fashion-shoot-pipeline`
 3. Pass filled prompts to script `--prompt` flags
 
+**Flow:** Hero → Contact Sheet (checkpoint) → crop-frames (checkpoint) → Videos → Stitch
+
 ## Rules
 
 - ✅ Read `.claude/skills/editorial-photography/presets/options.md` for exact preset snippets

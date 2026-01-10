@@ -5,6 +5,12 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { aiClient, sessionManager, checkpointEmitter, type CheckpointData } from './lib/ai-client.js';
 import { SDKInstrumentor } from './lib/instrumentor.js';
+import {
+  generatePrompt,
+  loadWorkflowConfig,
+  listAvailableWorkflows,
+  type WorkflowConfig
+} from './lib/prompt-generator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +58,9 @@ const sseConnections = new Map<string, express.Response[]>();
 
 // Store detected checkpoints per session (from PostToolUse hooks)
 const detectedCheckpoints = new Map<string, CheckpointData>();
+
+// Store active workflow configs per session
+const sessionWorkflows = new Map<string, WorkflowConfig>();
 
 // Listen for checkpoint events from PostToolUse hooks
 checkpointEmitter.on('checkpoint', ({ sessionId, checkpoint }: { sessionId: string; checkpoint: CheckpointData }) => {
@@ -158,6 +167,26 @@ app.get('/health', (_req, res) => {
       hasFalKey: !!process.env.FAL_KEY,
       port: PORT
     }
+  });
+});
+
+// List available workflows
+app.get('/workflows', (_req, res) => {
+  const workflows = listAvailableWorkflows();
+  res.json({
+    success: true,
+    workflows: workflows.map(id => {
+      try {
+        const config = loadWorkflowConfig(id);
+        return {
+          id: config.id,
+          name: config.name,
+          description: config.description
+        };
+      } catch {
+        return { id, name: id, description: '' };
+      }
+    })
   });
 });
 
@@ -288,7 +317,7 @@ app.get('/sessions/:id/stream', (req, res) => {
 
 // Main generate endpoint
 app.post('/generate', async (req, res) => {
-  const { prompt, sessionId, inputImages } = req.body;
+  const { prompt, sessionId, inputImages, workflowType } = req.body;
 
   if (!prompt) {
     return res.status(400).json({
@@ -306,6 +335,25 @@ app.post('/generate', async (req, res) => {
 
   console.log('🎬 Starting generation');
   console.log('📝 Prompt:', prompt.substring(0, 100) + (prompt.length > 100 ? '...' : ''));
+
+  // Load workflow config (default to fashion-editorial)
+  const workflowId = workflowType || 'fashion-editorial';
+  let workflowConfig: WorkflowConfig;
+  let systemPrompt: string;
+
+  try {
+    workflowConfig = loadWorkflowConfig(workflowId);
+    systemPrompt = generatePrompt(workflowConfig);
+    sessionWorkflows.set(campaignSessionId, workflowConfig);
+    console.log(`📋 Loaded workflow: ${workflowConfig.name}`);
+  } catch (error: any) {
+    console.error(`❌ Failed to load workflow: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      error: `Failed to load workflow: ${error.message}`,
+      sessionId: campaignSessionId
+    });
+  }
 
   // Create session and output directories
   let outputDir: string;
@@ -349,7 +397,9 @@ Example command with ALL ${images.length} reference images:
 npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/hero.png --aspect-ratio 3:2 --resolution 2K`;
     }
 
-    for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, undefined, images)) {
+    // Don't pass images as base64 multimodal input - avoids 5MB size limit
+    // Images are referenced by path in the prompt for generate-image.ts --input
+    for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, { systemPrompt, workflowConfig })) {
       const { message } = result;
       messages.push(message);
       instrumentor.processMessage(message);
@@ -434,7 +484,7 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
 
 // Streaming generate endpoint - streams tokens in real-time via SSE
 app.post('/generate-stream', async (req, res) => {
-  const { prompt, sessionId, inputImages } = req.body;
+  const { prompt, sessionId, inputImages, workflowType } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ success: false, error: 'Prompt is required' });
@@ -451,6 +501,23 @@ app.post('/generate-stream', async (req, res) => {
 
   console.log('🎬 Starting streaming generation');
   console.log('📝 Prompt:', prompt.substring(0, 100) + (prompt.length > 100 ? '...' : ''));
+
+  // Load workflow config (default to fashion-editorial)
+  const workflowId = workflowType || 'fashion-editorial';
+  let workflowConfig: WorkflowConfig;
+  let systemPrompt: string;
+
+  try {
+    workflowConfig = loadWorkflowConfig(workflowId);
+    systemPrompt = generatePrompt(workflowConfig);
+    sessionWorkflows.set(campaignSessionId, workflowConfig);
+    console.log(`📋 Loaded workflow: ${workflowConfig.name}`);
+  } catch (error: any) {
+    console.error(`❌ Failed to load workflow: ${error.message}`);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: `Failed to load workflow: ${error.message}` })}\n\n`);
+    res.end();
+    return;
+  }
 
   // Send session ID immediately
   res.write(`data: ${JSON.stringify({ type: 'session_init', sessionId: campaignSessionId })}\n\n`);
@@ -490,7 +557,9 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
     let currentMessageHasToolUse = false;  // Track if current message will have tool_use
     let hintSent = false;  // Track if we've sent a hint for current message
 
-    for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, undefined, images)) {
+    // Don't pass images as base64 multimodal input - avoids 5MB size limit
+    // Images are referenced by path in the prompt for generate-image.ts --input
+    for await (const result of aiClient.queryWithSession(fullPrompt, campaignSessionId, { systemPrompt, workflowConfig })) {
       const { message } = result;
       instrumentor.processMessage(message);
 
@@ -587,11 +656,15 @@ app.post('/sessions/:id/continue', async (req, res) => {
   console.log(`🔄 Continuing session ${sessionId}`);
   console.log(`📝 User prompt: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
 
+  // Get stored workflow config for this session
+  const workflowConfig = sessionWorkflows.get(sessionId);
+  const metadata = workflowConfig ? { workflowConfig } : undefined;
+
   try {
     const messages: any[] = [];
     const instrumentor = new SDKInstrumentor(sessionId, prompt);
 
-    for await (const result of aiClient.queryWithSession(prompt, sessionId)) {
+    for await (const result of aiClient.queryWithSession(prompt, sessionId, metadata)) {
       const { message } = result;
       messages.push(message);
       instrumentor.processMessage(message);
@@ -667,12 +740,16 @@ app.post('/sessions/:id/continue-stream', async (req, res) => {
 
   const instrumentor = new SDKInstrumentor(sessionId, prompt);
 
+  // Get stored workflow config for this session
+  const workflowConfig = sessionWorkflows.get(sessionId);
+  const metadata = workflowConfig ? { workflowConfig } : undefined;
+
   try {
     const assistantMessages: string[] = [];
     let currentMessageHasToolUse = false;  // Track if current message will have tool_use
     let hintSent = false;  // Track if we've sent a hint for current message
 
-    for await (const result of aiClient.queryWithSession(prompt, sessionId)) {
+    for await (const result of aiClient.queryWithSession(prompt, sessionId, metadata)) {
       const { message } = result;
       instrumentor.processMessage(message);
 

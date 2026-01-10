@@ -70,6 +70,20 @@ interface StitchResult {
 }
 
 // =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * Check if all videos have identical dimensions
+ * When true, we can skip scaling for better quality
+ */
+function allSameDimensions(metadataList: VideoMetadata[]): boolean {
+  if (metadataList.length === 0) return true;
+  const { width, height } = metadataList[0];
+  return metadataList.every(m => m.width === width && m.height === height);
+}
+
+// =============================================================================
 // MAIN STITCH FUNCTION
 // =============================================================================
 
@@ -113,7 +127,13 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
   });
 
   const { maxWidth, maxHeight } = findMaxDimensions(metadataList);
-  console.error(`  Target resolution: ${maxWidth}x${maxHeight}`);
+  const uniformDimensions = allSameDimensions(metadataList);
+
+  if (uniformDimensions) {
+    console.error(`  All clips are ${maxWidth}x${maxHeight} - skipping scaling`);
+  } else {
+    console.error(`  Mixed dimensions - scaling to ${maxWidth}x${maxHeight}`);
+  }
 
   // Create temp directory
   const tempDir = path.join(path.dirname(output), `.temp_stitch_${Date.now()}`);
@@ -147,7 +167,7 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
         width: maxWidth,
         height: maxHeight,
         frameOffset: totalFrameCount,
-        scaleWithPadding: true, // Enable auto-scaling for stitching
+        scaleWithPadding: !uniformDimensions, // Only scale if dimensions differ
         onProgress: (extracted, total) => {
           const percent = Math.round((extracted / total) * 100);
           process.stderr.write(
