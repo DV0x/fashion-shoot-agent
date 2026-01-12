@@ -24,7 +24,7 @@ export interface PipelineAssets {
   hero?: string;
   contactSheet?: string;
   frames: string[];      // frame-1.png through frame-6.png
-  videos: string[];      // video-1.mp4 through video-6.mp4
+  videos: string[];      // video-1.mp4 through video-5.mp4 (frame pairs)
   finalVideo?: string;
 }
 

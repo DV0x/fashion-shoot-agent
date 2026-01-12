@@ -154,25 +154,34 @@ function detectCheckpointLegacy(toolName: string, toolInput: any, toolResponse: 
 
   // Detect clips creation or regeneration (from generate-video.ts)
   // Triggers on:
-  // 1. Initial generation: video-6.mp4 (last of 6 sequential clips)
+  // 1. Initial generation: video-5.mp4 (last of 5 sequential frame-pair clips)
   // 2. Clip regeneration: any single video-N.mp4 output
   // Also check TaskOutput in case video generation runs as background task (>2min timeout)
-  const hasVideo6 = output.includes('video-6.mp4');
-  const hasAnyVideo = /video-[1-6]\.mp4/.test(output);
+  // Note: 5 videos from 6 frames (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6)
+  const hasVideo5 = output.includes('video-5.mp4');
+  const hasAnyVideo = /video-[1-5]\.mp4/.test(output);
 
   // Check if this is a single clip regeneration (only one video mentioned)
-  const videoMatches = output.match(/video-[1-6]\.mp4/g);
+  const videoMatches = output.match(/video-[1-5]\.mp4/g);
   const isSingleClipRegen = videoMatches && videoMatches.length === 1;
 
   const isClipsCreated =
-    (command.includes('generate-video.ts') && (hasVideo6 || isSingleClipRegen)) ||
+    (command.includes('generate-video.ts') && (hasVideo5 || isSingleClipRegen)) ||
     (isTaskOutput && hasAnyVideo && hasSuccessStatus && !hasError);
 
   if (isClipsCreated) {
     const regenClip = isSingleClipRegen ? videoMatches[0].match(/video-(\d)/)?.[1] : null;
+    const framePairLabels = ['1→2', '2→3', '3→4', '4→5', '5→6'];
     const message = regenClip
-      ? `Clip ${regenClip} regenerated. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate more clips.`
-      : '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.';
+      ? `Clip ${regenClip} (frames ${framePairLabels[parseInt(regenClip) - 1]}) regenerated. Choose speed or regenerate more clips.`
+      : `5 clips ready (frame pairs):
+- Clip 1: frames 1→2
+- Clip 2: frames 2→3
+- Clip 3: frames 3→4
+- Clip 4: frames 4→5
+- Clip 5: frames 5→6
+
+Choose speed (1x, 1.25x, 1.5x, 2x), or regenerate any clip.`;
 
     return {
       stage: 'clips',
@@ -182,8 +191,7 @@ function detectCheckpointLegacy(toolName: string, toolInput: any, toolResponse: 
         'outputs/videos/video-2.mp4',
         'outputs/videos/video-3.mp4',
         'outputs/videos/video-4.mp4',
-        'outputs/videos/video-5.mp4',
-        'outputs/videos/video-6.mp4'
+        'outputs/videos/video-5.mp4'
       ],
       message
     };

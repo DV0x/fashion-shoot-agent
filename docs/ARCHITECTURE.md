@@ -75,7 +75,7 @@ AI-powered fashion photoshoot generator built on the **Claude Agent SDK**. Trans
 | **Server** | Express.js 4.x |
 | **Frontend** | React 19 + Vite + Tailwind CSS 4 + Framer Motion |
 | **Image Gen** | FAL.ai (nano-banana-pro) |
-| **Video Gen** | FAL.ai (Kling 2.6 Pro) |
+| **Video Gen** | Kling AI direct API (v2.6 Pro) |
 | **Video Stitch** | FFmpeg (xfade with easing) |
 | **Image Processing** | Sharp + OpenCV.js |
 
@@ -143,15 +143,21 @@ fashion-shoot-agent/
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │   ANALYZE   │────▶│    HERO     │────▶│CONTACT SHEET│────▶│   FRAMES    │────▶│   CLIPS     │────▶│   STITCH    │
 │  Reference  │     │ CHECKPOINT 1│     │ CHECKPOINT 2│     │ CHECKPOINT 3│     │ CHECKPOINT 4│     │   (auto)    │
-│   images    │     │  2K, 3:2    │     │  2K, 3:2    │     │  6 × 1K     │     │  6 × 5sec   │     │   ~24sec    │
+│   images    │     │  2K, 3:2    │     │  2K, 3:2    │     │  6 × 1K     │     │  5 × 5sec   │     │   ~20sec    │
 └─────────────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └─────────────┘
                           │                   │                   │                   │
                      [User Review]       [User Review]       [User Review]       [User Review]
                      ├── Modify          ├── Modify          ├── Modify frame    ├── Regenerate clip
                      └── Continue        └── Continue        ├── Resize ratio    ├── Choose speed
-                                                             └── Continue        ├── Enable loop
-                                                                                 └── Continue
+                                                             └── Continue        └── Continue
 ```
+
+**Frame-Pair Video Generation:** 5 videos from 6 frames using `image_tail` interpolation:
+- Clip 1: frame-1 → frame-2
+- Clip 2: frame-2 → frame-3
+- Clip 3: frame-3 → frame-4
+- Clip 4: frame-4 → frame-5
+- Clip 5: frame-5 → frame-6
 
 **The 6 Camera Angles (Fixed):**
 ```
@@ -314,7 +320,7 @@ Executes generation scripts:
 | `generate-image.ts` | FAL.ai nano-banana-pro | Hero + contact sheet |
 | `crop-frames.ts` | OpenCV.js + Sharp | Extract 6 frames from grid (variance-based detection) |
 | `crop-frames-ffmpeg.ts` | FFmpeg | Fallback: simple math division (100% reliable) |
-| `generate-video.ts` | FAL.ai Kling 2.6 Pro | 5s video per frame |
+| `generate-video.ts` | Kling AI direct API (v2.6 Pro) | 5s video per frame pair (with `image_tail`) |
 | `stitch-videos-eased.ts` | FFmpeg | Combine with speed curves (smart dimension check) |
 
 #### crop-frames.ts - Adaptive Variance-Based Grid Detection + Normalization
@@ -440,8 +446,8 @@ Detection is checked in this order—first match wins:
 | 4 | `frames` | Bash contains `crop-frames.ts` AND output contains `frame-6.png` |
 | 5 | `frames` | Bash contains `resize-frames.ts` AND output contains `"success": true` |
 | 6 | `complete` | Bash/TaskOutput contains `fashion-video.mp4` (stitch output) |
-| 7 | `clips` | Bash contains `generate-video.ts` AND output contains `video-6.mp4` |
-| 8 | `clips` | TaskOutput contains `video-*.mp4` AND `retrieval_status>success` |
+| 7 | `clips` | Bash contains `generate-video.ts` AND output contains `video-5.mp4` |
+| 8 | `clips` | TaskOutput contains `video-[1-5].mp4` AND `retrieval_status>success` |
 
 **Why `complete` before `clips`?** When `stitch-videos-eased.ts` runs, its output logs the input clips (`video-1.mp4`, etc.). If `clips` were checked first, stitch would incorrectly trigger the clips checkpoint instead of complete.
 
@@ -449,7 +455,7 @@ Detection is checked in this order—first match wins:
 - The `contact-sheet` checkpoint triggers after the 2×3 grid is generated, allowing users to review before frame extraction via `crop-frames.ts`.
 - The `frames` checkpoint triggers from three sources: `crop-frames.ts` (initial creation), `resize-frames.ts` (aspect ratio change), and `generate-image.ts` (individual/multi-frame regeneration). After resize, users review the resized frames before video generation continues.
 - Multi-frame editing is supported: users can say "modify frames 2 and 3", "modify frames 1-4", or "modify all frames".
-- The `clips` checkpoint triggers after all 6 video clips are generated, allowing users to review clips, choose playback speed, enable loop, or regenerate specific clips before stitching.
+- The `clips` checkpoint triggers after all 5 video clips (frame pairs) are generated, allowing users to review clips, choose playback speed, or regenerate specific clips before stitching.
 - The `complete` checkpoint also checks `TaskOutput` tool results for when stitch runs as a background task (timeout >2min).
 
 ### Implementation
@@ -630,7 +636,9 @@ The `SDKInstrumentor` tracks:
 **Environment Variables:**
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...  # Required
-FAL_KEY=...                    # Required for image/video
+FAL_KEY=...                    # Required for image generation
+KLING_ACCESS_KEY=...           # Required for video generation (Access Key)
+KLING_SECRET_KEY=...           # Required for video generation (Secret Key)
 PORT=3002                      # Optional
 ```
 
@@ -679,8 +687,8 @@ outputs/
 ├── hero.png                    # 2K, 3:2 full-body
 ├── contact-sheet.png           # 2K, 3:2 grid
 ├── frames/frame-{1-6}.png      # 1K individual
-├── videos/video-{1-6}.mp4      # 5s each
-└── final/fashion-video.mp4     # ~24s stitched
+├── videos/video-{1-5}.mp4      # 5s each (frame pairs)
+└── final/fashion-video.mp4     # ~20s stitched
 ```
 
 **Expected Turns:** 50-80 for full pipeline

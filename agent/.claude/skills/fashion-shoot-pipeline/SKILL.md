@@ -1,11 +1,11 @@
 ---
 name: fashion-shoot-pipeline
-description: Execute image and video generation scripts using FAL.ai and FFmpeg. Use AFTER editorial-photography skill. Provides script commands for generate-image, crop-frames, generate-video, and stitch-videos.
+description: Execute image and video generation scripts using FAL.ai (images) and Kling AI (videos). Use AFTER editorial-photography skill. Provides script commands for generate-image, crop-frames, generate-video, and stitch-videos.
 ---
 
 # Fashion Shoot Pipeline Skill
 
-Execute the generation pipeline using FAL.ai and FFmpeg.
+Execute the generation pipeline using FAL.ai (images), Kling AI (videos), and FFmpeg (stitching).
 
 ## Prerequisite
 
@@ -25,9 +25,16 @@ Execute the generation pipeline using FAL.ai and FFmpeg.
 2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png  [CHECKPOINT]
 3. crop-frames.ts                → outputs/frames/frame-{1-6}.png  [CHECKPOINT]
 4. resize-frames.ts (OPTIONAL)   → outputs/frames/frame-{1-6}.png (resized)
-5. generate-video.ts × 6         → outputs/videos/video-{1-6}.mp4
+5. generate-video.ts × 5         → outputs/videos/video-{1-5}.mp4 (frame pairs)
 6. stitch-videos-eased.ts        → outputs/final/fashion-video.mp4
 ```
+
+**Note:** Video generation uses frame PAIRS (5 videos from 6 frames):
+- video-1: frame-1 → frame-2
+- video-2: frame-2 → frame-3
+- video-3: frame-3 → frame-4
+- video-4: frame-4 → frame-5
+- video-5: frame-5 → frame-6
 
 ## Directory Setup (Run First)
 
@@ -148,19 +155,20 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts \
 
 ## Script: generate-video.ts
 
-Generate videos via FAL.ai Kling 2.6 Pro.
+Generate videos via Kling AI direct API with frame-pair interpolation.
 
 ### Video Prompts
 
 Use the fixed prompts from `.claude/skills/editorial-photography/prompts/video.md`
 
-Each frame has a specific camera movement prompt. Copy the prompt exactly.
+Each transition has a specific camera movement prompt for the frame pair. Copy the prompt exactly.
 
-### Command
+### Command (Frame-Pair Mode)
 
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
+  --input-tail outputs/frames/frame-2.png \
   --prompt "<PROMPT_FROM_VIDEO.MD>" \
   --output outputs/videos/video-1.mp4 \
   --duration 5
@@ -168,13 +176,26 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--input` | Yes | - | Source frame image |
-| `--prompt` | Yes | - | Camera movement prompt (from video.md) |
+| `--input` | Yes | - | Start frame image |
+| `--input-tail` | No | - | End frame image (for frame-pair interpolation) |
+| `--prompt` | Yes | - | Transition prompt (from video.md) |
 | `--output` | Yes | - | Output video path |
 | `--duration` | No | 5 | 5 or 10 seconds |
 
+### Frame-Pair Mapping
+
+| Clip | Start Frame | End Frame | Command |
+|------|-------------|-----------|---------|
+| video-1 | frame-1.png | frame-2.png | `--input frame-1.png --input-tail frame-2.png` |
+| video-2 | frame-2.png | frame-3.png | `--input frame-2.png --input-tail frame-3.png` |
+| video-3 | frame-3.png | frame-4.png | `--input frame-3.png --input-tail frame-4.png` |
+| video-4 | frame-4.png | frame-5.png | `--input frame-4.png --input-tail frame-5.png` |
+| video-5 | frame-5.png | frame-6.png | `--input frame-5.png --input-tail frame-6.png` |
+
+**Important:** When using `--input-tail` for frame-pair mode, `camera_control` JSON is not available. Describe camera movements in the text prompt instead.
+
 **Errors:**
-- `FAL_KEY not set` → Add FAL_KEY to .env file
+- `KLING_ACCESS_KEY and KLING_SECRET_KEY ... required` → Add both keys to .env file
 - `Timeout` → Kling takes 2-3 minutes per video, be patient
 - `Request failed` → Retry once, then report to user
 
@@ -191,7 +212,6 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --clips outputs/videos/video-3.mp4 \
   --clips outputs/videos/video-4.mp4 \
   --clips outputs/videos/video-5.mp4 \
-  --clips outputs/videos/video-6.mp4 \
   --output outputs/final/fashion-video.mp4 \
   --clip-duration 1.5 \
   --easing dramaticSwoop
@@ -210,7 +230,7 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
 
 **Errors:**
 - `ffmpeg not found` → Install with `brew install ffmpeg`
-- `Input file missing` → Check all 6 videos exist
+- `Input file missing` → Check all 5 videos exist
 
 ---
 
@@ -218,7 +238,8 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| FAL_KEY not set | Missing API key | Add to .env file |
+| FAL_KEY not set | Missing image API key | Add FAL_KEY to .env file |
+| KLING keys not set | Missing video API keys | Add KLING_ACCESS_KEY and KLING_SECRET_KEY to .env |
 | Request failed | API error | Retry once |
 | Timeout | Kling slow | Wait 2-3 min per video |
 | File not found | Missing output | Check previous step completed |
@@ -240,12 +261,11 @@ outputs/
 │   ├── frame-5.png
 │   └── frame-6.png
 ├── videos/
-│   ├── video-1.mp4            # From generate-video
-│   ├── video-2.mp4
-│   ├── video-3.mp4
-│   ├── video-4.mp4
-│   ├── video-5.mp4
-│   └── video-6.mp4
+│   ├── video-1.mp4            # From generate-video (frames 1→2)
+│   ├── video-2.mp4            # From generate-video (frames 2→3)
+│   ├── video-3.mp4            # From generate-video (frames 3→4)
+│   ├── video-4.mp4            # From generate-video (frames 4→5)
+│   └── video-5.mp4            # From generate-video (frames 5→6)
 └── final/
-    └── fashion-video.mp4       # From stitch-videos
+    └── fashion-video.mp4       # From stitch-videos (~20s)
 ```

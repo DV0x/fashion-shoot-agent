@@ -1,0 +1,260 @@
+{
+  "id": "fashion-editorial",
+  "name": "Fashion Editorial",
+  "description": "Editorial fashion photoshoot with 6-frame contact sheet and 5 frame-pair video clips",
+
+  "skills": {
+    "content": "editorial-photography",
+    "actions": "fashion-shoot-pipeline"
+  },
+
+  "setup": {
+    "directories": [
+      "outputs/frames",
+      "outputs/videos",
+      "outputs/final"
+    ],
+    "workingDir": "agent"
+  },
+
+  "presetMatching": {
+    "edgy, dramatic, bold, intense": {
+      "pose": "editorial-drama",
+      "background": "studio-black"
+    },
+    "casual, relaxed, natural, chill": {
+      "pose": "relaxed-natural",
+      "background": "studio-grey"
+    },
+    "street, urban, city": {
+      "pose": "street-walk",
+      "background": "outdoor-urban"
+    },
+    "professional, clean, commercial": {
+      "pose": "confident-standing",
+      "background": "studio-white"
+    },
+    "industrial, raw, concrete": {
+      "pose": "leaning-casual",
+      "background": "industrial"
+    },
+    "warm, soft, intimate": {
+      "pose": "seated-editorial",
+      "background": "warm-daylight"
+    },
+    "colorful, vibrant, bold colors": {
+      "pose": "editorial-drama",
+      "background": "color-gel"
+    },
+    "default": {
+      "pose": "confident-standing",
+      "background": "studio-grey"
+    }
+  },
+
+  "phases": [
+    {
+      "name": "hero",
+      "description": "Generate full-body hero image",
+      "promptFile": "prompts/hero.md",
+      "script": {
+        "command": "generate-image.ts",
+        "outputPath": "outputs/hero.png",
+        "options": {
+          "aspect-ratio": "3:2",
+          "resolution": "2K"
+        }
+      },
+      "checkpoint": {
+        "detect": {
+          "command_contains": "generate-image.ts",
+          "output_contains": "outputs/hero.png"
+        },
+        "artifacts": ["outputs/hero.png"],
+        "type": "image",
+        "message": "Hero image ready. Reply \"continue\" or describe changes.",
+        "modifications": {
+          "description": "User requests change → Re-activate content skill, select new presets, regenerate hero.png",
+          "examples": [
+            "make it more dramatic",
+            "change to outdoor background",
+            "use a different pose"
+          ]
+        }
+      }
+    },
+    {
+      "name": "contact-sheet",
+      "description": "Generate 2x3 contact sheet with 6 camera angles",
+      "promptFile": "prompts/contact-sheet.md",
+      "script": {
+        "command": "generate-image.ts",
+        "inputPath": "outputs/hero.png",
+        "outputPath": "outputs/contact-sheet.png",
+        "options": {
+          "aspect-ratio": "3:2",
+          "resolution": "2K"
+        }
+      },
+      "checkpoint": {
+        "detect": {
+          "output_contains": "outputs/contact-sheet.png"
+        },
+        "artifacts": ["outputs/contact-sheet.png"],
+        "type": "image",
+        "message": "Contact sheet preview ready. Continue to generate 6 individual frames.",
+        "modifications": {
+          "description": "User reviews contact sheet preview. On 'continue': execute crop-frames.ts to extract 6 frames.",
+          "examples": ["continue", "looks good", "extract frames"]
+        }
+      }
+    },
+    {
+      "name": "frames",
+      "description": "Crop contact sheet into 6 individual frames",
+      "script": {
+        "command": "crop-frames.ts",
+        "inputPath": "outputs/contact-sheet.png",
+        "outputDir": "outputs/frames/",
+        "options": {
+          "rows": 2,
+          "cols": 3
+        }
+      },
+      "checkpoint": {
+        "detect": [
+          {
+            "output_contains": "frame-6.png"
+          },
+          {
+            "command_contains": "resize-frames.ts",
+            "output_contains": "success"
+          }
+        ],
+        "artifacts": [
+          "outputs/frames/frame-1.png",
+          "outputs/frames/frame-2.png",
+          "outputs/frames/frame-3.png",
+          "outputs/frames/frame-4.png",
+          "outputs/frames/frame-5.png",
+          "outputs/frames/frame-6.png"
+        ],
+        "type": "image-grid",
+        "message": "6 frames ready. Reply \"continue\" or request modifications.",
+        "modifications": {
+          "description": "User can regenerate individual frames or resize all frames",
+          "patterns": {
+            "regenerate": "regenerate frame {n}",
+            "resize": "resize to {ratio}"
+          },
+          "supportedRatios": ["16:9", "9:16", "4:3", "3:4", "1:1", "3:2", "2:3"],
+          "examples": [
+            "regenerate frame 3",
+            "resize to 9:16 for TikTok"
+          ]
+        }
+      }
+    },
+    {
+      "name": "clips",
+      "description": "Generate 5 video clips using frame-pair interpolation",
+      "promptFile": "prompts/video.md",
+      "script": {
+        "command": "generate-video.ts",
+        "repeat": 5,
+        "inputPattern": "outputs/frames/frame-{n}.png",
+        "inputTailPattern": "outputs/frames/frame-{n+1}.png",
+        "outputPattern": "outputs/videos/video-{n}.mp4",
+        "options": {
+          "duration": 5
+        }
+      },
+      "checkpoint": {
+        "detect": [
+          {
+            "command_contains": "generate-video.ts",
+            "output_contains": "video-5.mp4"
+          }
+        ],
+        "artifacts": [
+          "outputs/videos/video-1.mp4",
+          "outputs/videos/video-2.mp4",
+          "outputs/videos/video-3.mp4",
+          "outputs/videos/video-4.mp4",
+          "outputs/videos/video-5.mp4"
+        ],
+        "type": "video-grid",
+        "message": "5 clips ready (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6). Choose speed, easing, or regenerate any clip.",
+        "modifications": {
+          "description": "User can regenerate clips or choose stitch settings. Clip N uses frames N and N+1.",
+          "framePairMapping": {
+            "clip-1": ["frame-1", "frame-2"],
+            "clip-2": ["frame-2", "frame-3"],
+            "clip-3": ["frame-3", "frame-4"],
+            "clip-4": ["frame-4", "frame-5"],
+            "clip-5": ["frame-5", "frame-6"]
+          },
+          "patterns": {
+            "regenerate": "regenerate clip {n}",
+            "speed": "{n}x speed",
+            "easing": "use {easing} easing"
+          },
+          "defaultStitchSettings": {
+            "clipDuration": 1.5,
+            "easing": "dramaticSwoop",
+            "outputFps": 60
+          },
+          "examples": [
+            "regenerate clip 3",
+            "1.5x speed",
+            "use cinematic easing"
+          ]
+        }
+      }
+    },
+    {
+      "name": "stitch",
+      "description": "Stitch 5 frame-pair videos with speed curves into final video",
+      "script": {
+        "command": "stitch-videos-eased.ts",
+        "inputs": [
+          "outputs/videos/video-1.mp4",
+          "outputs/videos/video-2.mp4",
+          "outputs/videos/video-3.mp4",
+          "outputs/videos/video-4.mp4",
+          "outputs/videos/video-5.mp4"
+        ],
+        "outputPath": "outputs/final/fashion-video.mp4",
+        "options": {
+          "clip-duration": 1.5,
+          "easing": "dramaticSwoop",
+          "output-fps": 60
+        }
+      },
+      "checkpoint": {
+        "detect": [
+          {
+            "command_contains": "stitch-videos-eased.ts",
+            "output_contains": "fashion-video.mp4"
+          },
+          {
+            "command_contains": "ffmpeg",
+            "output_contains": "fashion-video.mp4"
+          }
+        ],
+        "artifacts": ["outputs/final/fashion-video.mp4"],
+        "type": "video",
+        "message": "Fashion video complete!",
+        "isFinal": true
+      }
+    }
+  ],
+
+  "rules": [
+    "ALWAYS use Skill tool to load skills - never improvise prompts",
+    "ALWAYS pass ALL user reference images to hero generation",
+    "ALWAYS stop at checkpoints and wait for user input",
+    "NEVER analyze or describe images - FAL.ai handles visual intelligence",
+    "NEVER skip the skill chain"
+  ]
+}

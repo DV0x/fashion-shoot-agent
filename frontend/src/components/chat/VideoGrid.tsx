@@ -6,6 +6,9 @@ interface VideoGridProps {
   videos: VideoMessageType[];
 }
 
+// Frame pair labels for 5-clip grid (6 frames → 5 videos)
+const FRAME_PAIR_LABELS = ['1→2', '2→3', '3→4', '4→5', '5→6'];
+
 export function VideoGrid({ videos }: VideoGridProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -127,9 +130,13 @@ export function VideoGrid({ videos }: VideoGridProps) {
                 </div>
               </div>
 
-              {/* Clip number badge */}
+              {/* Clip number badge with frame pair label */}
               <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-background/70 text-[10px] font-mono text-text-secondary">
-                {video.label || `Clip ${index + 1}`}
+                {video.label || (
+                  videos.length === 5 && FRAME_PAIR_LABELS[index]
+                    ? `Clip ${index + 1} (${FRAME_PAIR_LABELS[index]})`
+                    : `Clip ${index + 1}`
+                )}
               </div>
             </motion.div>
           ))}
@@ -254,9 +261,13 @@ export function VideoGrid({ videos }: VideoGridProps) {
               </button>
             </div>
 
-            {/* Clip label */}
+            {/* Clip label with frame pair */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-surface/80 text-text-secondary text-sm font-mono">
-              {selectedVideo.label || `Clip ${selectedIndex! + 1}`}
+              {selectedVideo.label || (
+                videos.length === 5 && FRAME_PAIR_LABELS[selectedIndex!]
+                  ? `Clip ${selectedIndex! + 1} (frames ${FRAME_PAIR_LABELS[selectedIndex!]})`
+                  : `Clip ${selectedIndex! + 1}`
+              )}
             </div>
 
             {/* Keyboard hint */}

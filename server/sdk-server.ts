@@ -873,10 +873,9 @@ app.post('/test/clips-checkpoint', (req, res) => {
           'outputs/videos/video-2.mp4',
           'outputs/videos/video-3.mp4',
           'outputs/videos/video-4.mp4',
-          'outputs/videos/video-5.mp4',
-          'outputs/videos/video-6.mp4'
+          'outputs/videos/video-5.mp4'
         ],
-        message: '6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.'
+        message: '5 clips ready (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6). Choose speed or regenerate any clip.'
       }
     };
     console.log('[TEST] Sending clips checkpoint:', checkpointEvent.checkpoint);

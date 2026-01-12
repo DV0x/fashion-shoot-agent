@@ -78,15 +78,20 @@ message: 6 frames ready. Reply "continue" or request modifications.
 \`\`\`
 
 ### Phase 5: Video Clips → CHECKPOINT 4
-1. Read \`prompts/video.md\` from editorial-photography skill (6 different prompts)
-2. Execute generate-video.ts for each frame (6 times, sequentially)
+1. Read \`prompts/video.md\` from editorial-photography skill (5 transition prompts for frame pairs)
+2. Execute generate-video.ts for frame PAIRS (5 times, sequentially):
+   - video-1: \`--input frame-1.png --input-tail frame-2.png\` (frames 1→2)
+   - video-2: \`--input frame-2.png --input-tail frame-3.png\` (frames 2→3)
+   - video-3: \`--input frame-3.png --input-tail frame-4.png\` (frames 3→4)
+   - video-4: \`--input frame-4.png --input-tail frame-5.png\` (frames 4→5)
+   - video-5: \`--input frame-5.png --input-tail frame-6.png\` (frames 5→6)
 3. Output checkpoint and STOP:
 \`\`\`
 ---CHECKPOINT---
 stage: clips
 status: complete
-artifacts: outputs/videos/video-1.mp4,outputs/videos/video-2.mp4,outputs/videos/video-3.mp4,outputs/videos/video-4.mp4,outputs/videos/video-5.mp4,outputs/videos/video-6.mp4
-message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or regenerate any clip.
+artifacts: outputs/videos/video-1.mp4,outputs/videos/video-2.mp4,outputs/videos/video-3.mp4,outputs/videos/video-4.mp4,outputs/videos/video-5.mp4
+message: 5 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), or regenerate any clip.
 ---END CHECKPOINT---
 \`\`\`
 
@@ -94,8 +99,8 @@ message: 6 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), loop (yes/no), or re
 1. Parse user's stitch preferences:
    - **Easing**: dramaticSwoop (default), easeInOutSine, cinematic, etc.
    - **Clip duration**: 1.5s (default) - duration per clip in final video
-2. Execute stitch-videos-eased.ts with user preferences:
-   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts --clips ... --clip-duration 1.5 --easing dramaticSwoop\`
+2. Execute stitch-videos-eased.ts with 5 clips:
+   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts --clips outputs/videos/video-1.mp4 --clips outputs/videos/video-2.mp4 --clips outputs/videos/video-3.mp4 --clips outputs/videos/video-4.mp4 --clips outputs/videos/video-5.mp4 --output outputs/final/fashion-video.mp4 --clip-duration 1.5 --easing dramaticSwoop\`
 3. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
 
 ## CHECKPOINT MODIFICATION HANDLING
@@ -146,19 +151,25 @@ Loop until user says "continue".
 ### At Checkpoint 4 (Clips)
 
 **Regenerate clip** (e.g., "regenerate clip 3", "redo video 5"):
-1. Re-read \`prompts/video.md\` for that specific frame's prompt
-2. Execute generate-video.ts for that frame only
-3. Show CHECKPOINT 4 again with all 6 clips
+1. Re-read \`prompts/video.md\` for that specific transition's prompt
+2. Execute generate-video.ts with the correct frame pair:
+   - Clip 1: \`--input frame-1.png --input-tail frame-2.png\`
+   - Clip 2: \`--input frame-2.png --input-tail frame-3.png\`
+   - Clip 3: \`--input frame-3.png --input-tail frame-4.png\`
+   - Clip 4: \`--input frame-4.png --input-tail frame-5.png\`
+   - Clip 5: \`--input frame-5.png --input-tail frame-6.png\`
+3. Show CHECKPOINT 4 again with all 5 clips
 
 **Speed/loop selection** (e.g., "1.5x speed", "loop", "1.25x with loop"):
-- Parse preferences and proceed to Phase 5 (Stitch)
+- Parse preferences and proceed to Phase 6 (Stitch)
 
 **Continue** (e.g., "continue", "stitch"):
-- Use defaults (1x speed, no loop) and proceed to Phase 5
+- Use defaults (1x speed, no loop) and proceed to Phase 6
 
 ## ERROR RECOVERY
 
-- **FAL.ai failure**: Retry once. If still fails, report error to user with details.
+- **FAL.ai failure** (image generation): Retry once. If still fails, report error to user with details.
+- **Kling failure** (video generation): Retry once. Kling takes 2-3 minutes per video, be patient.
 - **FFmpeg failure**: Check that all input videos exist, report missing files.
 - **Script not found**: Verify you're in correct directory (agent/).
 

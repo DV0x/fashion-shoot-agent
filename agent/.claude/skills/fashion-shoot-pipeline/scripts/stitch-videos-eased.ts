@@ -271,10 +271,10 @@ Options:
   -h, --help                  Show this help message
 
 Examples:
-  # Stitch 6 fashion videos with dramatic swoop
+  # Stitch 5 fashion videos (frame pairs) with dramatic swoop
   npx tsx stitch-videos-eased.ts \\
     -c video-1.mp4 -c video-2.mp4 -c video-3.mp4 \\
-    -c video-4.mp4 -c video-5.mp4 -c video-6.mp4 \\
+    -c video-4.mp4 -c video-5.mp4 \\
     -o final.mp4 \\
     --bezier 0.85,0,0.15,1
 
