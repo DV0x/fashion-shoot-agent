@@ -1,4 +1,4 @@
-# TRANSITION_PROMPTS (5 videos from 6 frames)
+# TRANSITION_PROMPTS (5 videos + optional loop)
 
 Frame-pair interpolation prompts for Kling AI with `image_tail` parameter.
 
@@ -68,6 +68,21 @@ The camera slowly and smoothly pushes in on fabric texture and details.
 Macro-like creep movement toward the garment element.
 The subject is completely still. The fabric and accessories are completely still.
 Extreme close-up reveals intricate texture and craftsmanship.
+```
+
+---
+
+## Video 6: Loop (Extreme Detail → Beauty Portrait) (frames 6→1) — OPTIONAL
+
+**Movement:** Pull Back + Arc
+
+**When to use:** Only generate this clip when user requests "loop" or "enable loop"
+
+```
+The camera slowly pulls back and arcs upward, transitioning from extreme detail to wide portrait view.
+Smooth pull-back movement revealing the full subject.
+The composition gracefully returns to the opening frame.
+Cinematic dolly-out motion. The subject is completely still.
 ```
 
 ---

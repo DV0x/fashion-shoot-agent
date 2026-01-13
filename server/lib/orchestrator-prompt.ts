@@ -91,17 +91,25 @@ message: 6 frames ready. Reply "continue" or request modifications.
 stage: clips
 status: complete
 artifacts: outputs/videos/video-1.mp4,outputs/videos/video-2.mp4,outputs/videos/video-3.mp4,outputs/videos/video-4.mp4,outputs/videos/video-5.mp4
-message: 5 clips ready. Choose speed (1x, 1.25x, 1.5x, 2x), or regenerate any clip.
+message: 5 clips ready. Toggle loop (connects last frame to first), or regenerate any clip.
 ---END CHECKPOINT---
 \`\`\`
 
 ### Phase 6: Stitch Final Video
-1. Parse user's stitch preferences:
-   - **Easing**: dramaticSwoop (default), easeInOutSine, cinematic, etc.
-   - **Clip duration**: 1.5s (default) - duration per clip in final video
-2. Execute stitch-videos-eased.ts with 5 clips:
+1. Check if **loop** is enabled:
+   - **Loop OFF (default)**: Stitch 5 clips as-is
+   - **Loop ON**: First generate video-6 (frame-6 → frame-1), then stitch 6 clips
+
+2. If loop enabled, generate the loop clip first:
+   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts --input outputs/frames/frame-6.png --input-tail outputs/frames/frame-1.png --prompt "Smooth camera transition completing the loop. Gentle movement returning to opening shot." --output outputs/videos/video-6.mp4\`
+
+3. Execute stitch-videos-eased.ts:
+   - **Without loop (5 clips)**:
    \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts --clips outputs/videos/video-1.mp4 --clips outputs/videos/video-2.mp4 --clips outputs/videos/video-3.mp4 --clips outputs/videos/video-4.mp4 --clips outputs/videos/video-5.mp4 --output outputs/final/fashion-video.mp4 --clip-duration 1.5 --easing dramaticSwoop\`
-3. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
+   - **With loop (6 clips)**:
+   \`npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts --clips outputs/videos/video-1.mp4 --clips outputs/videos/video-2.mp4 --clips outputs/videos/video-3.mp4 --clips outputs/videos/video-4.mp4 --clips outputs/videos/video-5.mp4 --clips outputs/videos/video-6.mp4 --output outputs/final/fashion-video.mp4 --clip-duration 1.5 --easing dramaticSwoop\`
+
+4. Report completion: "Final video ready: outputs/final/fashion-video.mp4"
 
 ## CHECKPOINT MODIFICATION HANDLING
 
@@ -160,11 +168,11 @@ Loop until user says "continue".
    - Clip 5: \`--input frame-5.png --input-tail frame-6.png\`
 3. Show CHECKPOINT 4 again with all 5 clips
 
-**Speed/loop selection** (e.g., "1.5x speed", "loop", "1.25x with loop"):
-- Parse preferences and proceed to Phase 6 (Stitch)
+**Loop toggle** (e.g., "enable loop", "loop on", "with loop"):
+- Set loop=true, proceed to Phase 6 (generates video-6 from frame-6→frame-1, then stitches 6 clips)
 
 **Continue** (e.g., "continue", "stitch"):
-- Use defaults (1x speed, no loop) and proceed to Phase 6
+- Use default (no loop), stitch 5 clips and proceed to Phase 6
 
 ## ERROR RECOVERY
 

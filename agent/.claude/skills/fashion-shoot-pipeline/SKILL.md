@@ -29,12 +29,13 @@ Execute the generation pipeline using FAL.ai (images), Kling AI (videos), and FF
 6. stitch-videos-eased.ts        → outputs/final/fashion-video.mp4
 ```
 
-**Note:** Video generation uses frame PAIRS (5 videos from 6 frames):
+**Note:** Video generation uses frame PAIRS (5 videos from 6 frames, + optional loop):
 - video-1: frame-1 → frame-2
 - video-2: frame-2 → frame-3
 - video-3: frame-3 → frame-4
 - video-4: frame-4 → frame-5
 - video-5: frame-5 → frame-6
+- video-6: frame-6 → frame-1 (OPTIONAL - only if loop enabled)
 
 ## Directory Setup (Run First)
 
@@ -191,6 +192,7 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
 | video-3 | frame-3.png | frame-4.png | `--input frame-3.png --input-tail frame-4.png` |
 | video-4 | frame-4.png | frame-5.png | `--input frame-4.png --input-tail frame-5.png` |
 | video-5 | frame-5.png | frame-6.png | `--input frame-5.png --input-tail frame-6.png` |
+| video-6 | frame-6.png | frame-1.png | `--input frame-6.png --input-tail frame-1.png` **(LOOP ONLY)** |
 
 **Important:** When using `--input-tail` for frame-pair mode, `camera_control` JSON is not available. Describe camera movements in the text prompt instead.
 
@@ -228,9 +230,26 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
 
 **Recommended:** `--clip-duration 1.5 --easing dramaticSwoop`
 
+### With Loop (6 clips)
+
+If user enabled loop, include video-6 in the stitch:
+
+```bash
+npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
+  --clips outputs/videos/video-1.mp4 \
+  --clips outputs/videos/video-2.mp4 \
+  --clips outputs/videos/video-3.mp4 \
+  --clips outputs/videos/video-4.mp4 \
+  --clips outputs/videos/video-5.mp4 \
+  --clips outputs/videos/video-6.mp4 \
+  --output outputs/final/fashion-video.mp4 \
+  --clip-duration 1.5 \
+  --easing dramaticSwoop
+```
+
 **Errors:**
 - `ffmpeg not found` → Install with `brew install ffmpeg`
-- `Input file missing` → Check all 5 videos exist
+- `Input file missing` → Check all videos exist (5 without loop, 6 with loop)
 
 ---
 
@@ -265,7 +284,8 @@ outputs/
 │   ├── video-2.mp4            # From generate-video (frames 2→3)
 │   ├── video-3.mp4            # From generate-video (frames 3→4)
 │   ├── video-4.mp4            # From generate-video (frames 4→5)
-│   └── video-5.mp4            # From generate-video (frames 5→6)
+│   ├── video-5.mp4            # From generate-video (frames 5→6)
+│   └── video-6.mp4            # OPTIONAL: Loop clip (frames 6→1)
 └── final/
-    └── fashion-video.mp4       # From stitch-videos (~20s)
+    └── fashion-video.mp4       # From stitch-videos (~20s, or ~24s with loop)
 ```
