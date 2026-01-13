@@ -1,35 +1,117 @@
-# Dependencies
-node_modules/
+# =============================================================================
+# SECURITY - Secrets and Credentials (CRITICAL)
+# =============================================================================
 
-# Environment variables
+# Environment files (may contain API keys)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# Build outputs
+# Credentials and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+secrets.json
+service-account*.json
+
+# =============================================================================
+# Dependencies
+# =============================================================================
+
+node_modules/
+.pnpm-store/
+.yarn/
+
+# =============================================================================
+# Build Outputs
+# =============================================================================
+
 dist/
 build/
+.next/
+out/
 
-# IDE
+# =============================================================================
+# Cloudflare Build Artifacts (Option C)
+# =============================================================================
+
+# These are copied during build, not source code
+cloudflare/agent/
+cloudflare/public/
+cloudflare/.wrangler/
+
+# Large reference documentation (scraped for development)
+cloudflare/*.txt
+
+# =============================================================================
+# IDE and Editor
+# =============================================================================
+
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-
-# Sessions (runtime data)
-sessions/
-
-# History (IDE local history)
+*~
 .history/
 
-# Test outputs
+# =============================================================================
+# OS Files
+# =============================================================================
+
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# Runtime Data
+# =============================================================================
+
+# Session storage (local development)
+sessions/
+
+# Upload storage (local development)
+uploads/
+
+# Generated outputs (large media files)
+agent/outputs/
+
+# =============================================================================
+# Logs
+# =============================================================================
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# =============================================================================
+# Testing
+# =============================================================================
+
 coverage/
 .nyc_output/
+*.lcov
+.jest/
+
+# =============================================================================
+# Misc
+# =============================================================================
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Package manager locks (keep only one)
+# Uncomment the ones you don't use:
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
