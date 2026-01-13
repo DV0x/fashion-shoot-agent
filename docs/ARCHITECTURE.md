@@ -48,7 +48,7 @@ AI-powered fashion photoshoot generator built on the **Claude Agent SDK**. Trans
 │  │  │ (Knowledge)             │    │ (Action)                            │  │   │
 │  │  │ • Prompt templates      │───▶│ • generate-image.ts  (FAL.ai)       │  │   │
 │  │  │ • 7 pose presets        │    │ • crop-frames.ts     (OpenCV+Sharp) │  │   │
-│  │  │ • 7 background presets  │    │ • generate-video.ts  (FAL.ai Kling) │  │   │
+│  │  │ • 7 background presets  │    │ • generate-video.ts  (Kling API)    │  │   │
 │  │  │ • 6 camera angles       │    │ • stitch-videos-eased.ts (FFmpeg)   │  │   │
 │  │  └─────────────────────────┘    └─────────────────────────────────────┘  │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
@@ -112,7 +112,7 @@ fashion-shoot-agent/
 │       ├── hero.png               # Full-body hero shot
 │       ├── contact-sheet.png      # 2×3 grid
 │       ├── frames/frame-{1-6}.png # Individual frames
-│       ├── videos/video-{1-6}.mp4 # Individual clips
+│       ├── videos/video-{1-5}.mp4 # Frame-pair clips (1→2, 2→3, etc.)
 │       └── final/fashion-video.mp4 # Stitched output (H.264 yuv420p)
 │
 ├── frontend/                        # React Frontend

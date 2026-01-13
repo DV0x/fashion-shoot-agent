@@ -2,8 +2,8 @@
 /**
  * crop-frames.ts
  *
- * Crop a contact sheet grid into individual frames using hybrid detection.
- * Auto-detects grid structure using OpenCV edge detection and projection profiles.
+ * Crop a contact sheet grid into individual frames using variance-based detection.
+ * Auto-detects grid structure by finding uniform (low-variance) gutter regions.
  *
  * Usage:
  *   npx tsx crop-frames.ts \
