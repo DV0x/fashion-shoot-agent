@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/schemas/config.schema.json",
+  "name": "fashion-shoot-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static assets - React frontend (copied from frontend/dist during build)
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
+  },
+
+  // Container configuration for Claude Agent SDK + FFmpeg + Sharp
+  "containers": [{
+    "class_name": "Sandbox",
+    "image": "./Dockerfile",
+    "instance_type": "standard-2",
+    "max_instances": 10
+  }],
+
+  // Durable Object binding for container orchestration
+  "durable_objects": {
+    "bindings": [{
+      "name": "Sandbox",
+      "class_name": "Sandbox"
+    }]
+  },
+
+  // D1 database for sessions and checkpoints
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "fashion-shoot-sessions",
+    "database_id": "fa67eff0-e99e-4896-b5b6-20cb5f44df9f"
+  }],
+
+  // R2 bucket for images, videos, and outputs
+  "r2_buckets": [{
+    "binding": "STORAGE",
+    "bucket_name": "fashion-shoot-storage"
+  }],
+
+  // Environment variables (non-secret)
+  "vars": {
+    "ENVIRONMENT": "production",
+    "CF_ACCOUNT_ID": "091650847ca6a1d9bb40bee044dfdc91"
+  },
+
+  // Durable Object migrations
+  "migrations": [{
+    "tag": "v1",
+    "new_sqlite_classes": ["Sandbox"]
+  }]
+}

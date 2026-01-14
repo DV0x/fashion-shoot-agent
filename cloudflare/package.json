@@ -1,0 +1,24 @@
+{
+  "name": "fashion-shoot-agent-cloudflare",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "prebuild": "rm -rf agent && cp -r ../agent ./agent && rm -f agent/.env agent/.env.* && rm -rf agent/outputs",
+    "build:frontend": "cd ../frontend && npm run build && rm -rf ../cloudflare/public && cp -r dist ../cloudflare/public",
+    "build": "npm run prebuild && npm run build:frontend",
+    "deploy": "npm run build && npx wrangler deploy",
+    "deploy:only": "npx wrangler deploy",
+    "dev": "npx wrangler dev",
+    "tail": "npx wrangler tail",
+    "db:init": "npx wrangler d1 execute fashion-shoot-sessions --file=schema.sql"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.6.11"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/node": "^25.0.8",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.59.1"
+  }
+}
