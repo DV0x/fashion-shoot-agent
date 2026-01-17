@@ -75,9 +75,10 @@ async function* createPromptGenerator(prompt: string, signal: AbortSignal) {
  * Detect checkpoints from tool execution
  * Emits checkpoint markers via console for Worker to capture
  * Artifact paths include session prefix for correct R2 URL serving
+ * Returns the checkpoint data if detected (for controlling agent flow)
  */
-function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): void {
-  if (toolName !== "Bash" && toolName !== "TaskOutput") return;
+function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): { stage: string; isFinal?: boolean } | null {
+  if (toolName !== "Bash" && toolName !== "TaskOutput") return null;
 
   const output = typeof toolResponse === "string" ? toolResponse : JSON.stringify(toolResponse);
   const command = toolName === "Bash" ? (toolInput?.command || "") : "";
@@ -87,31 +88,33 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
 
   // Detect hero.png creation
   if (command.includes("generate-image.ts") && output.includes("outputs/hero.png")) {
-    emitCheckpoint({
+    const checkpoint = {
       stage: "hero",
       status: "complete",
       artifact: `${sessionPrefix}/hero.png`,
       type: "image",
       message: 'Hero image ready. Reply "continue" or describe changes.',
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "hero" };
   }
 
   // Detect contact sheet creation
   if (command.includes("generate-image.ts") && output.includes("outputs/contact-sheet.png")) {
-    emitCheckpoint({
+    const checkpoint = {
       stage: "contact-sheet",
       status: "complete",
       artifact: `${sessionPrefix}/contact-sheet.png`,
       type: "image",
       message: 'Contact sheet ready. Reply "continue" or describe changes.',
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "contact-sheet" };
   }
 
   // Detect frames creation (from crop-frames.ts or crop-frames-ffmpeg.ts)
   if ((command.includes("crop-frames.ts") || command.includes("crop-frames-ffmpeg.ts")) && output.includes("frame-6.png")) {
-    emitCheckpoint({
+    const checkpoint = {
       stage: "frames",
       status: "complete",
       artifacts: [
@@ -124,15 +127,16 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
       ],
       type: "image",
       message: '6 frames ready. Reply "continue" or request modifications.',
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "frames" };
   }
 
   // Detect frames resize
   if (command.includes("resize-frames.ts") && output.includes('"success"')) {
     const aspectMatch = command.match(/--aspect-ratio\s+(\S+)/);
     const aspectRatio = aspectMatch ? aspectMatch[1] : "new aspect ratio";
-    emitCheckpoint({
+    const checkpoint = {
       stage: "frames",
       status: "complete",
       artifacts: [
@@ -145,14 +149,15 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
       ],
       type: "image",
       message: `Frames resized to ${aspectRatio}. Reply "continue" to generate videos.`,
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "frames" };
   }
 
   // Detect clips creation (MUST be checked BEFORE complete to avoid false positives)
   // Only triggers when generate-video.ts creates video-5.mp4 (the 5th clip)
   if (command.includes("generate-video.ts") && output.includes("video-5.mp4")) {
-    emitCheckpoint({
+    const checkpoint = {
       stage: "clips",
       status: "complete",
       artifacts: [
@@ -164,23 +169,28 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
       ],
       type: "video",
       message: "5 clips ready. Choose speed or regenerate any clip.",
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "clips" };
   }
 
   // Detect final video (AFTER clips check)
   // Only triggers when stitch-videos-eased.ts creates the final video
   if (command.includes("stitch-videos-eased.ts") && output.includes("fashion-video.mp4") && !output.includes("Error")) {
-    emitCheckpoint({
+    const checkpoint = {
       stage: "complete",
       status: "complete",
       artifact: `${sessionPrefix}/final/fashion-video.mp4`,
       type: "video",
       message: "Fashion video complete!",
       isFinal: true,
-    });
-    return;
+    };
+    emitCheckpoint(checkpoint);
+    return { stage: "complete", isFinal: true };
   }
+
+  // No checkpoint detected
+  return null;
 }
 
 /**
@@ -276,7 +286,15 @@ function createHooks() {
             });
 
             // Detect and emit checkpoints
-            detectCheckpoint(input.tool_name, input.tool_input, input.tool_response);
+            const checkpoint = detectCheckpoint(input.tool_name, input.tool_input, input.tool_response);
+
+            // If checkpoint detected and NOT final, stop the agent to await user input
+            // This prevents the agent from continuing to the next phase without approval
+            if (checkpoint && !checkpoint.isFinal) {
+              console.error(`[agent] Stopping at checkpoint: ${checkpoint.stage}`);
+              return { continue: false };
+            }
+
             return { continue: true };
           },
         ],
