@@ -36,6 +36,13 @@ import {
 } from "./lib/video-utils.js";
 import { calculateSourceTimestamps } from "./lib/timestamp-calc.js";
 
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
@@ -111,17 +118,17 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
     easingName = easing;
   }
 
-  console.error(`\nStitching ${clips.length} clips with hard cuts`);
-  console.error(`  Easing: ${easingName}`);
-  console.error(`  Clip duration: ${clipDuration}s each`);
-  console.error(`  Output FPS: ${outputFps}`);
+  emitProgress(`[Stitch] Stitching ${clips.length} clips with hard cuts`);
+  emitProgress(`[Stitch] Easing: ${easingName}`);
+  emitProgress(`[Stitch] Clip duration: ${clipDuration}s each`);
+  emitProgress(`[Stitch] Output FPS: ${outputFps}`);
 
   // Analyze all clips to find target dimensions (use max of all)
-  console.error(`\nAnalyzing clips...`);
+  emitProgress(`[Stitch] Analyzing clips...`);
   const metadataList: VideoMetadata[] = clips.map((clip, i) => {
     const meta = getVideoMetadata(clip);
-    console.error(
-      `  [${i + 1}] ${path.basename(clip)}: ${meta.duration.toFixed(2)}s, ${meta.width}x${meta.height}`
+    emitProgress(
+      `[Stitch] Clip ${i + 1}: ${path.basename(clip)} (${meta.duration.toFixed(2)}s, ${meta.width}x${meta.height})`
     );
     return meta;
   });
@@ -130,9 +137,9 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
   const uniformDimensions = allSameDimensions(metadataList);
 
   if (uniformDimensions) {
-    console.error(`  All clips are ${maxWidth}x${maxHeight} - skipping scaling`);
+    emitProgress(`[Stitch] All clips are ${maxWidth}x${maxHeight} - skipping scaling`);
   } else {
-    console.error(`  Mixed dimensions - scaling to ${maxWidth}x${maxHeight}`);
+    emitProgress(`[Stitch] Mixed dimensions - scaling to ${maxWidth}x${maxHeight}`);
   }
 
   // Create temp directory
@@ -143,12 +150,12 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
     let totalFrameCount = 0;
 
     // Process each clip
-    console.error(`\nExtracting speed-curved frames...`);
+    emitProgress(`[Stitch] Extracting speed-curved frames...`);
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
       const metadata = metadataList[i];
 
-      console.error(`  [${i + 1}/${clips.length}] ${path.basename(clip)}`);
+      emitProgress(`[Stitch] Processing clip ${i + 1}/${clips.length}: ${path.basename(clip)}`);
 
       // Calculate timestamps for this clip using shared library
       const { timestamps } = calculateSourceTimestamps({
@@ -176,11 +183,10 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
         },
       });
 
-      process.stderr.write("\n");
       totalFrameCount += framesExtracted;
     }
 
-    console.error(`\nTotal frames: ${totalFrameCount}`);
+    emitProgress(`[Stitch] Total frames extracted: ${totalFrameCount}`);
 
     // Ensure output directory exists
     const outputDir = path.dirname(output);
@@ -198,8 +204,8 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
     });
 
     const totalDuration = totalFrameCount / outputFps;
-    console.error(`\nOutput saved to: ${output}`);
-    console.error(`  Duration: ${totalDuration.toFixed(2)}s`);
+    emitProgress(`[Stitch] Output saved: ${path.basename(output)}`);
+    emitProgress(`[Stitch] Duration: ${totalDuration.toFixed(2)}s`);
 
     return {
       clips,
@@ -213,10 +219,10 @@ async function stitchVideosEased(options: StitchOptions): Promise<StitchResult> 
   } finally {
     // Cleanup
     if (!keepTemp && existsSync(tempDir)) {
-      console.error(`Cleaning up temp files...`);
+      emitProgress(`[Stitch] Cleaning up temp files...`);
       rmSync(tempDir, { recursive: true, force: true });
     } else if (keepTemp) {
-      console.error(`Temp files kept at: ${tempDir}`);
+      emitProgress(`[Stitch] Temp files kept at: ${tempDir}`);
     }
   }
 }

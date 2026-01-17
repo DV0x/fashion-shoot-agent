@@ -3,8 +3,18 @@
  * Routes requests to handlers and serves static assets
  */
 
-import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
-export { Sandbox } from "@cloudflare/sandbox";
+import { proxyToSandbox, Sandbox as BaseSandbox } from "@cloudflare/sandbox";
+
+/**
+ * Custom Sandbox class with extended idle timeout
+ *
+ * sleepAfter = '1h' keeps the container alive for 1 hour of inactivity.
+ * This preserves SDK context between user interactions during the pipeline.
+ * Without this, container would sleep after ~30 seconds, losing all state.
+ */
+export class Sandbox extends BaseSandbox {
+  override sleepAfter: string | number = '1h';  // 1 hour idle timeout (default is much shorter)
+}
 
 // Import handlers (to be created)
 import { handleGenerate, handleGenerateStream } from "./handlers/generate";

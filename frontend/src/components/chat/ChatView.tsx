@@ -100,7 +100,7 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
       case 'image':
         return <ImageMessage message={message} />;
       case 'checkpoint':
-        return <CheckpointMessage message={message} onContinue={onContinue} />;
+        return <CheckpointMessage message={message} onContinue={onContinue} isGenerating={isGenerating} />;
       case 'progress':
         return <ProgressMessage message={message} />;
       case 'video':

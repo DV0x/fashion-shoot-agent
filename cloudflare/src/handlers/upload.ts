@@ -22,6 +22,7 @@ interface UploadedFile {
   size: number;
   mimetype: string;
   url: string;
+  path: string; // Container-accessible path for agent to use
 }
 
 /**
@@ -108,6 +109,7 @@ export async function handleUpload(
           size: file.size,
           mimetype: file.type,
           url: `/uploads/${filename}`,
+          path: `/storage/uploads/${filename}`, // Container-accessible path
         });
 
         console.log(`Uploaded: ${file.name} -> ${r2Key}`);

@@ -308,7 +308,7 @@ export class AIClient {
 
     this.defaultOptions = {
       cwd: projectRoot,
-      model: 'claude-opus-4-5-20251101',
+      model: 'claude-sonnet-4-20250514',
       maxTurns: 100,  // Full pipeline needs ~50-80 turns (hero + contact + 6 frames + 6 videos + stitch)
       settingSources: ['user', 'project'],
       allowedTools: [

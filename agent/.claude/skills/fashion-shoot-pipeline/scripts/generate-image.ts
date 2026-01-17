@@ -23,6 +23,13 @@ import { existsSync } from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
 
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+
 // Types
 type AspectRatio = "21:9" | "16:9" | "3:2" | "4:3" | "5:4" | "1:1" | "4:5" | "3:4" | "2:3" | "9:16" | "auto";
 type Resolution = "1K" | "2K" | "4K";
@@ -76,16 +83,16 @@ async function uploadToFalStorage(filePath: string): Promise<string> {
   const mimeType = mimeTypes[ext] || "image/png";
   const file = new File([buffer], fileName, { type: mimeType });
 
-  console.error(`Uploading ${fileName} to FAL storage...`);
+  emitProgress(`[FAL] Uploading ${fileName} to FAL storage...`);
   const url = await fal.storage.upload(file);
-  console.error(`Uploaded: ${url}`);
+  emitProgress(`[FAL] Uploaded: ${fileName}`);
 
   return url;
 }
 
 // Download image from URL to local file
 async function downloadImage(url: string, outputPath: string): Promise<void> {
-  console.error(`Downloading result to ${outputPath}...`);
+  emitProgress(`[FAL] Downloading result...`);
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -96,7 +103,7 @@ async function downloadImage(url: string, outputPath: string): Promise<void> {
   const buffer = Buffer.from(arrayBuffer);
   await writeFile(outputPath, buffer);
 
-  console.error(`Saved: ${outputPath}`);
+  emitProgress(`[FAL] Saved: ${path.basename(outputPath)}`);
 }
 
 // Generate image using FAL.ai
@@ -119,13 +126,13 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
     ? "fal-ai/nano-banana-pro/edit"  // Image-to-image
     : "fal-ai/nano-banana-pro";       // Text-to-image
 
-  console.error(`Using model: ${modelId}`);
-  console.error(`Prompt: ${prompt.substring(0, 100)}...`);
+  emitProgress(`[FAL] Using model: ${modelId}`);
+  emitProgress(`[FAL] Prompt: ${prompt.substring(0, 80)}...`);
 
   // Upload input images if provided
   let imageUrls: string[] = [];
   if (hasInputImages) {
-    console.error(`Uploading ${inputImages.length} reference image(s)...`);
+    emitProgress(`[FAL] Uploading ${inputImages.length} reference image(s)...`);
     imageUrls = await Promise.all(inputImages.map(uploadToFalStorage));
   }
 
@@ -143,7 +150,7 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
     : baseInput;
 
   // Call FAL.ai API
-  console.error("Generating image...");
+  emitProgress("[FAL] Generating image...");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await fal.subscribe(modelId, {
     input: input as any,
@@ -151,7 +158,7 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
     onQueueUpdate: (update) => {
       if (update.status === "IN_PROGRESS" && update.logs) {
         update.logs.forEach((log) => {
-          console.error(`[FAL] ${log.message}`);
+          emitProgress(`[FAL] ${log.message}`);
         });
       }
     },

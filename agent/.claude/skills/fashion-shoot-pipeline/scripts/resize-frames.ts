@@ -24,6 +24,13 @@ import { existsSync, mkdirSync, readdirSync, renameSync } from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
 
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+
 // Supported aspect ratios
 const ASPECT_RATIOS: Record<string, number> = {
   "16:9": 16 / 9,
@@ -243,7 +250,7 @@ async function main() {
     // Create output directory if needed
     if (args.outputDir !== args.inputDir && !existsSync(args.outputDir)) {
       mkdirSync(args.outputDir, { recursive: true });
-      console.error(`Created output directory: ${args.outputDir}`);
+      emitProgress(`[Resize] Created output directory`);
     }
 
     // Find all image files
@@ -252,7 +259,7 @@ async function main() {
       throw new Error(`No image files found in ${args.inputDir}`);
     }
 
-    console.error(`\nResizing ${imageFiles.length} frames to ${args.aspectRatio}...\n`);
+    emitProgress(`[Resize] Resizing ${imageFiles.length} frames to ${args.aspectRatio}`);
 
     const results: ResizeResult[] = [];
 
@@ -263,7 +270,7 @@ async function main() {
       const outputFilename = `${basename}.${args.outputFormat}`;
       const outputPath = path.join(args.outputDir, outputFilename);
 
-      console.error(`Processing: ${filename}`);
+      emitProgress(`[Resize] Processing: ${filename}`);
 
       const result = await resizeFrame(
         inputPath,
@@ -272,15 +279,12 @@ async function main() {
         args.outputFormat
       );
 
-      console.error(
-        `  ${result.originalWidth}x${result.originalHeight} → ${result.newWidth}x${result.newHeight}`
-      );
-      console.error(`  Saved: ${outputPath}`);
+      emitProgress(`[Resize] ${result.originalWidth}x${result.originalHeight} → ${result.newWidth}x${result.newHeight}`);
 
       results.push(result);
     }
 
-    console.error(`\nSuccessfully resized ${results.length} frames to ${args.aspectRatio}.\n`);
+    emitProgress(`[Resize] Successfully resized ${results.length} frames to ${args.aspectRatio}`);
 
     // Output JSON result to stdout (for pipeline integration)
     console.log(

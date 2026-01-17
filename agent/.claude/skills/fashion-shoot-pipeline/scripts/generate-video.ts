@@ -27,6 +27,14 @@ import { readFile, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { parseArgs } from "util";
 import { createHmac } from "crypto";
+import * as path from "path";
+
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
 
 // Types
 type Duration = "5" | "10";
@@ -132,7 +140,7 @@ async function createVideoTask(options: GenerateVideoOptions): Promise<string> {
 
   const jwtToken = generateJwtToken();
 
-  console.error(`[Kling] Encoding start frame: ${inputImage}`);
+  emitProgress(`[Kling] Encoding start frame: ${path.basename(inputImage)}`);
   const imageBase64 = await encodeImageBase64(inputImage);
 
   // Build request body
@@ -147,17 +155,17 @@ async function createVideoTask(options: GenerateVideoOptions): Promise<string> {
 
   // Add end frame if provided (for frame-pair interpolation)
   if (inputTailImage) {
-    console.error(`[Kling] Encoding end frame: ${inputTailImage}`);
+    emitProgress(`[Kling] Encoding end frame: ${path.basename(inputTailImage)}`);
     const imageTailBase64 = await encodeImageBase64(inputTailImage);
     requestBody.image_tail = imageTailBase64;
-    console.error(`[Kling] Frame-pair mode: ${inputImage} → ${inputTailImage}`);
+    emitProgress(`[Kling] Frame-pair mode: ${path.basename(inputImage)} → ${path.basename(inputTailImage)}`);
   } else {
-    console.error(`[Kling] Single-frame mode: ${inputImage}`);
+    emitProgress(`[Kling] Single-frame mode: ${path.basename(inputImage)}`);
   }
 
-  console.error(`[Kling] Creating video task...`);
-  console.error(`[Kling] Model: kling-v2-6, Mode: pro, Duration: ${duration}s`);
-  console.error(`[Kling] Prompt: ${prompt.substring(0, 100)}...`);
+  emitProgress(`[Kling] Creating video task...`);
+  emitProgress(`[Kling] Model: kling-v2-6, Mode: pro, Duration: ${duration}s`);
+  emitProgress(`[Kling] Prompt: ${prompt.substring(0, 100)}...`);
 
   const response = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
     method: "POST",
@@ -179,7 +187,7 @@ async function createVideoTask(options: GenerateVideoOptions): Promise<string> {
     throw new Error(`Kling API error: ${result.message}`);
   }
 
-  console.error(`[Kling] Task created: ${result.data.task_id}`);
+  emitProgress(`[Kling] Task created: ${result.data.task_id}`);
   return result.data.task_id;
 }
 
@@ -220,7 +228,7 @@ async function pollForCompletion(taskId: string): Promise<string> {
       if (!result.data.task_result?.videos?.[0]?.url) {
         throw new Error("No video URL in successful response");
       }
-      console.error(`[Kling] Task completed successfully!`);
+      emitProgress(`[Kling] Task completed successfully!`);
       return result.data.task_result.videos[0].url;
     }
 
@@ -231,7 +239,7 @@ async function pollForCompletion(taskId: string): Promise<string> {
     }
 
     // Status is "submitted" or "processing"
-    console.error(`[Kling] Status: ${status} (attempt ${attempt + 1}/${maxAttempts})...`);
+    emitProgress(`[Kling] Status: ${status} (attempt ${attempt + 1}/${maxAttempts})...`);
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
 
@@ -240,7 +248,7 @@ async function pollForCompletion(taskId: string): Promise<string> {
 
 // Download video from URL to local file
 async function downloadVideo(url: string, outputPath: string): Promise<void> {
-  console.error(`[Kling] Downloading video to ${outputPath}...`);
+  emitProgress(`[Kling] Downloading video...`);
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -251,7 +259,7 @@ async function downloadVideo(url: string, outputPath: string): Promise<void> {
   const buffer = Buffer.from(arrayBuffer);
   await writeFile(outputPath, buffer);
 
-  console.error(`[Kling] Saved: ${outputPath}`);
+  emitProgress(`[Kling] Saved: ${path.basename(outputPath)}`);
 }
 
 // Generate video using Kling AI

@@ -50,6 +50,7 @@ const initialState: SessionState = {
   activity: null,
 };
 
+
 type AddTextMessage = { role: MessageRole; type: 'text'; content: string; isStreaming?: boolean };
 type AddThinkingMessage = { role: MessageRole; type: 'thinking'; content: string };
 type AddImageMessage = { role: MessageRole; type: 'image'; src: string; caption?: string };
@@ -336,10 +337,21 @@ export function useStreamingGenerate() {
 
         if (subtype === 'tool_call' || subtype === 'tool_use') {
           const toolName = eventData?.tool_name as string || eventData?.name as string;
+          const detail = eventData?.detail as string;
           if (toolName) {
-            setActivity(getActivityLabel(toolName));
+            // Show tool name with detail if available
+            const activity = getActivityLabel(toolName);
+            if (detail) {
+              console.log(`[TOOL] ${toolName}: ${detail}`);
+            }
+            setActivity(activity);
           }
         } else if (subtype === 'tool_result' || subtype === 'tool_response') {
+          const toolName = eventData?.tool_name as string;
+          const summary = eventData?.summary as string;
+          if (summary) {
+            console.log(`[TOOL RESULT] ${toolName}: ${summary.substring(0, 100)}...`);
+          }
           setActivity(null);
         }
         break;
@@ -348,9 +360,9 @@ export function useStreamingGenerate() {
       case 'checkpoint': {
         // Checkpoint detected via hook (sent immediately)
         const checkpoint = data.checkpoint as Checkpoint;
-        console.log('[SSE DEBUG] Received checkpoint event:', JSON.stringify(checkpoint, null, 2));
+        console.log('[SSE DEBUG] Received checkpoint event:', checkpoint?.stage);
+
         if (checkpoint) {
-          console.log('[SSE DEBUG] Adding artifact messages for checkpoint:', checkpoint.stage);
           // Add artifact images/videos first
           addArtifactMessages(checkpoint);
           // Then add checkpoint message
@@ -366,26 +378,10 @@ export function useStreamingGenerate() {
       case 'complete': {
         // Generation complete
         const checkpoint = data.checkpoint as Checkpoint | undefined;
+        console.log('[SSE DEBUG] Received complete event, checkpoint:', checkpoint?.stage);
 
-        console.log('[SSE DEBUG] Received complete event');
-        console.log('[SSE DEBUG] Complete event checkpoint:', checkpoint ? JSON.stringify(checkpoint, null, 2) : 'null');
-        console.log('[SSE DEBUG] Full complete event data:', JSON.stringify(data, null, 2));
-
-        // Add artifact messages if checkpoint has artifacts
-        if (checkpoint) {
-          console.log('[SSE DEBUG] Adding artifact messages from complete event:', checkpoint.stage);
-          console.log('[SSE DEBUG] Artifact:', checkpoint.artifact);
-          console.log('[SSE DEBUG] Artifacts:', checkpoint.artifacts);
-          addArtifactMessages(checkpoint);
-          // Add checkpoint message
-          addMessage({
-            role: 'system',
-            type: 'checkpoint',
-            checkpoint,
-          });
-        } else {
-          console.log('[SSE DEBUG] No checkpoint in complete event');
-        }
+        // NOTE: Don't add checkpoint UI here - it's already handled by 'checkpoint' event
+        // This prevents duplicate checkpoint cards and artifacts
 
         setState((prev) => {
           // Mark streaming message as no longer streaming, and remove if empty
@@ -432,6 +428,68 @@ export function useStreamingGenerate() {
           error: data.error as string,
         }));
         streamingMessageIdRef.current = null;
+        break;
+
+      case 'status':
+        // Status updates from container initialization
+        setActivity(data.message as string);
+        break;
+
+      case 'stdout': {
+        // Container stdout - parse for agent output JSON
+        // The agent-runner outputs final response as JSON to stdout
+        const stdoutData = data.data as string;
+        console.log('[STDOUT]', stdoutData);
+
+        // Try to parse as JSON - if success, update the message with full response
+        try {
+          const parsed = JSON.parse(stdoutData);
+          if (parsed.success && parsed.response) {
+            // Replace streaming message content with the complete response
+            setState((prev) => {
+              const updatedMessages = prev.messages.map((msg) => {
+                if (msg.id === streamingMessageIdRef.current && (msg.type === 'text' || msg.type === 'thinking')) {
+                  return { ...msg, content: parsed.response };
+                }
+                return msg;
+              });
+              return { ...prev, messages: updatedMessages };
+            });
+          }
+        } catch {
+          // Not JSON, ignore
+        }
+        break;
+      }
+
+      case 'stderr': {
+        // Container stderr - contains agent streaming output
+        const stderrData = data.data as string;
+
+        if (stderrData?.includes('[token]')) {
+          // Real-time token streaming (with includePartialMessages: true)
+          const match = stderrData.match(/\[token\]\s*([\s\S]*)/);
+          if (match) {
+            appendToStreamingMessage(match[1]);
+          }
+        } else if (stderrData?.includes('[progress]')) {
+          // Legacy progress output (complete messages)
+          const match = stderrData.match(/\[progress\]\s*([\s\S]*)/);
+          if (match) {
+            appendToStreamingMessage(match[1]);
+          }
+        } else if (stderrData?.includes('[agent]') || stderrData?.includes('[checkpoint]') || stderrData?.includes('[assistant]')) {
+          console.log('[AGENT]', stderrData);
+        } else if (stderrData && !stderrData.includes('[')) {
+          // Continuation of previous output (chunked by container)
+          appendToStreamingMessage(stderrData);
+        }
+        break;
+      }
+
+      case 'start':
+        // Container started
+        setActivity('Container running...');
         break;
     }
   }, [appendToStreamingMessage, addMessage, addArtifactMessages, setActivity]);

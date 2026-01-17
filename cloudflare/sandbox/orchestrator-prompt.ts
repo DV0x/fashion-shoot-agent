@@ -68,8 +68,12 @@ message: Contact sheet preview ready. Reply "continue" to extract frames or desc
 \`\`\`
 
 ### Phase 4: Frames → CHECKPOINT 3
-1. Execute crop-frames.ts to extract frames from contact sheet:
-   \`cd /workspace/agent && npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts --input outputs/contact-sheet.png --output-dir outputs/frames/\`
+1. Execute crop-frames.ts to extract frames from contact sheet (with FFmpeg fallback):
+   - **Primary (OpenCV-based, smart gutter detection)**:
+     \`cd /workspace/agent && npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts --input outputs/contact-sheet.png --output-dir outputs/frames/\`
+   - **Fallback (FFmpeg-based, if OpenCV fails)**:
+     \`cd /workspace/agent && npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames-ffmpeg.ts --input outputs/contact-sheet.png --output-dir outputs/frames/ --padding 5\`
+   - If crop-frames.ts fails with OpenCV/WASM errors, automatically retry with crop-frames-ffmpeg.ts
 2. Output checkpoint and STOP:
 \`\`\`
 ---CHECKPOINT---
@@ -183,6 +187,7 @@ Loop until user says "continue".
 - **Kling failure** (video generation): Retry once. Kling takes 2-3 minutes per video, be patient.
 - **FFmpeg failure**: Check that all input videos exist, report missing files.
 - **Script not found**: Verify you're in correct directory (/workspace/agent/).
+- **crop-frames.ts failure** (OpenCV/WASM error): Automatically fall back to crop-frames-ffmpeg.ts with --padding 5.
 
 ## RULES
 
@@ -190,7 +195,7 @@ Loop until user says "continue".
 - ALWAYS use Skill tool to activate skills - never guess prompts or commands
 - ALWAYS pass ALL user reference images to hero generation
 - ALWAYS stop at checkpoints and wait for user input
-- crop-frames.ts auto-detects grid gutters and normalizes frame dimensions
+- crop-frames.ts (OpenCV) auto-detects grid gutters; crop-frames-ffmpeg.ts is the fallback
 - NEVER analyze or describe images - FAL.ai handles visual intelligence
 - NEVER skip the skill chain - editorial-photography THEN fashion-shoot-pipeline
 `;

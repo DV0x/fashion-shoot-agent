@@ -5,12 +5,13 @@ import type { CheckpointMessage as CheckpointMessageType } from '../../lib/types
 interface CheckpointMessageProps {
   message: CheckpointMessageType;
   onContinue?: (options?: string) => void;
+  isGenerating?: boolean;
 }
 
 const SPEED_OPTIONS = ['1', '1.25', '1.5', '2'] as const;
 type SpeedOption = typeof SPEED_OPTIONS[number];
 
-export function CheckpointMessage({ message, onContinue }: CheckpointMessageProps) {
+export function CheckpointMessage({ message, onContinue, isGenerating }: CheckpointMessageProps) {
   const { checkpoint } = message;
 
   // State for clips checkpoint options
@@ -76,19 +77,22 @@ export function CheckpointMessage({ message, onContinue }: CheckpointMessageProp
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => onContinue?.('16:9')}
-                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors"
+                  disabled={isGenerating}
+                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   16:9 Landscape
                 </button>
                 <button
                   onClick={() => onContinue?.('9:16')}
-                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors"
+                  disabled={isGenerating}
+                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   9:16 Portrait
                 </button>
                 <button
                   onClick={() => onContinue?.('1:1')}
-                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors"
+                  disabled={isGenerating}
+                  className="px-3 py-1.5 bg-surface hover:bg-surface-elevated border border-border text-text-secondary hover:text-text-primary rounded-full text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   1:1 Square
                 </button>
@@ -146,7 +150,8 @@ export function CheckpointMessage({ message, onContinue }: CheckpointMessageProp
             {showSpeedOptions ? (
               <button
                 onClick={handleClipsContinue}
-                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-background rounded-full text-sm font-medium transition-colors"
+                disabled={isGenerating}
+                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-background rounded-full text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Continue
                 <span className="ml-1.5 text-xs opacity-80">
@@ -156,7 +161,8 @@ export function CheckpointMessage({ message, onContinue }: CheckpointMessageProp
             ) : (
               <button
                 onClick={() => onContinue?.()}
-                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-background rounded-full text-sm font-medium transition-colors"
+                disabled={isGenerating}
+                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-background rounded-full text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {showAspectRatioOptions ? 'Continue (Keep Original)' : 'Continue'}
               </button>

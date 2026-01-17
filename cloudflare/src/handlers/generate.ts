@@ -11,6 +11,30 @@
 import type { Env } from "../index";
 import { getSandbox, parseSSEStream, InvalidMountConfigError, type ExecEvent } from "@cloudflare/sandbox";
 
+/**
+ * Get or create a container session - handles SessionAlreadyExists gracefully
+ *
+ * When the same sessionId is used, the sandbox instance persists and the session
+ * may already exist. This function handles that case by retrieving the existing session.
+ */
+async function getOrCreateContainerSession(
+  sandbox: ReturnType<typeof getSandbox>,
+  sessionId: string,
+  env: Record<string, string>
+) {
+  const execSessionId = `exec-${sessionId}`;
+  try {
+    console.log(`[session] Creating session ${execSessionId}`);
+    return await sandbox.createSession({ id: execSessionId, env });
+  } catch (err: any) {
+    if (err.message?.includes('SessionAlreadyExists') || err.message?.includes('already exists')) {
+      console.log(`[session] Session exists, retrieving ${execSessionId}`);
+      return await sandbox.getSession(execSessionId);
+    }
+    throw err;
+  }
+}
+
 interface GenerateRequest {
   prompt: string;
   sessionId?: string;
@@ -126,21 +150,33 @@ export async function handleGenerate(
     // Get sandbox instance - same sessionId = same persistent container
     const sandbox = getSandbox(env.Sandbox, sessionId);
 
-    // Ensure mount point exists (idempotent - mkdir -p is safe to repeat)
-    await sandbox.exec(`mkdir -p /storage`);
+    // Ensure mount points exist
+    await sandbox.exec(`mkdir -p /storage/uploads /workspace/agent/outputs`);
 
-    // Mount R2 bucket (idempotent - handles already-mounted case)
-    await mountBucketSafe(sandbox, "fashion-shoot-storage", "/storage", {
+    // Mount uploads to /storage/uploads (for reference images)
+    await mountBucketSafe(sandbox, "fashion-shoot-storage", "/storage/uploads", {
       endpoint: `https://${env.CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
       provider: "r2",
       credentials: {
         accessKeyId: env.AWS_ACCESS_KEY_ID,
         secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
       },
+      prefix: "/uploads",
     });
 
-    // Create output directories (idempotent)
-    await sandbox.exec(`mkdir -p /storage/outputs/${sessionId}/{frames,videos,final}`);
+    // Mount outputs directly to agent's working directory with session isolation
+    await mountBucketSafe(sandbox, "fashion-shoot-storage", "/workspace/agent/outputs", {
+      endpoint: `https://${env.CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      provider: "r2",
+      credentials: {
+        accessKeyId: env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      },
+      prefix: `/outputs/${sessionId}`,
+    });
+
+    // Create output subdirectories (idempotent)
+    await sandbox.exec(`mkdir -p /workspace/agent/outputs/{frames,videos,final}`);
 
     // Build full prompt with image references
     let fullPrompt = prompt;
@@ -157,21 +193,27 @@ Example command:
 npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/hero.png --aspect-ratio 3:2 --resolution 2K`;
     }
 
-    // Run agent (blocking for non-streaming)
-    const result = await sandbox.exec("npx tsx /workspace/agent-runner.ts", {
+    // Create session with env vars - these persist for ALL commands in the session
+    const session = await getOrCreateContainerSession(sandbox, sessionId, {
+      // API keys - will be inherited by child processes
+      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+      FAL_KEY: env.FAL_KEY,
+      KLING_ACCESS_KEY: env.KLING_ACCESS_KEY,
+      KLING_SECRET_KEY: env.KLING_SECRET_KEY,
+      // Shell environment
+      HOME: "/root",
+      CI: "true",
+      CLAUDE_CODE_SKIP_EULA: "true",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
+      TERM: "dumb",
+      NO_COLOR: "1",
+    });
+
+    // Run agent (blocking for non-streaming) - only pass command-specific env vars
+    const result = await session.exec("npx tsx /workspace/agent-runner.ts", {
       env: {
         PROMPT: fullPrompt,
         SESSION_ID: sessionId,
-        ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-        FAL_KEY: env.FAL_KEY,
-        KLING_ACCESS_KEY: env.KLING_ACCESS_KEY,
-        KLING_SECRET_KEY: env.KLING_SECRET_KEY,
-        HOME: "/root",
-        CI: "true",
-        CLAUDE_CODE_SKIP_EULA: "true",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
-        TERM: "dumb",
-        NO_COLOR: "1",
       },
       timeout: 600000, // 10 minutes
     });
@@ -212,6 +254,56 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
 }
 
 /**
+ * Lifecycle state for container management
+ */
+interface LifecycleState {
+  pipelineCompleted: boolean;
+  clientDisconnected: boolean;
+  hadError: boolean;
+}
+
+/**
+ * Handle container lifecycle based on what happened during execution
+ *
+ * Cost-optimized approach (avoids accumulating sleeping containers):
+ * - Pipeline complete → Destroy (free resources immediately)
+ * - User disconnected → Destroy (avoid hitting container limits)
+ * - Error → Destroy (don't pay for broken state)
+ * - Normal checkpoint → Keep active (user will continue soon)
+ *
+ * If user returns after disconnect, context reconstruction via D1 + R2 handles it.
+ */
+async function handleContainerLifecycle(
+  sandbox: ReturnType<typeof getSandbox>,
+  sessionId: string,
+  state: LifecycleState
+): Promise<void> {
+  const { pipelineCompleted, clientDisconnected, hadError } = state;
+
+  try {
+    if (pipelineCompleted || clientDisconnected || hadError) {
+      // Destroy in all these cases to free resources and avoid hitting limits
+      const reason = pipelineCompleted ? "pipeline complete"
+                   : clientDisconnected ? "client disconnected"
+                   : "error occurred";
+      await sandbox.destroy();
+      console.log(`[lifecycle] Container DESTROYED (${reason}): ${sessionId}`);
+    }
+    // else: Normal checkpoint pause - container stays active, 1hr timeout applies
+    else {
+      console.log(`[lifecycle] Container stays ACTIVE (awaiting input): ${sessionId}`);
+    }
+  } catch (err) {
+    console.error(`[lifecycle] Failed to destroy container:`, err);
+  } finally {
+    // Always dispose the RPC stub to prevent warnings
+    try {
+      (sandbox as any).dispose?.();
+    } catch {}
+  }
+}
+
+/**
  * Handle streaming generate request via SSE
  */
 export async function handleGenerateStream(
@@ -241,6 +333,23 @@ export async function handleGenerateStream(
     ctx.waitUntil((async () => {
       let lastCheckpoint: any = null;
 
+      // Lifecycle state tracking
+      let pipelineCompleted = false;
+      let clientDisconnected = false;
+      let hadError = false;
+      let sandbox: ReturnType<typeof getSandbox> | null = null;
+
+      // SSE heartbeat to prevent Cloudflare 100-second proxy timeout
+      // Video generation can take 2-3 minutes per clip
+      const heartbeatInterval = setInterval(async () => {
+        try {
+          await writer.write(encoder.encode(': heartbeat\n\n'));
+        } catch {
+          // Writer closed - client disconnected
+          clientDisconnected = true;
+        }
+      }, 30000);  // Every 30 seconds
+
       try {
         // Send session init immediately
         await writer.write(
@@ -252,30 +361,54 @@ export async function handleGenerateStream(
           encoder.encode(`data: ${JSON.stringify({ type: "status", message: "Initializing container..." })}\n\n`)
         );
 
+        // Check if session already exists (for continuation detection)
+        const existingSession = await env.DB.prepare(`
+          SELECT id, pipeline_stage FROM sessions WHERE id = ?
+        `).bind(sessionId).first<{ id: string; pipeline_stage: string }>();
+
+        const isExistingSession = !!existingSession;
+        const pipelineStage = existingSession?.pipeline_stage || "init";
+        const isContinuation = isExistingSession && pipelineStage !== "init";
+
+        console.log(`[session] Session ${sessionId}: existing=${isExistingSession}, stage=${pipelineStage}, continuation=${isContinuation}`);
+
         // Create or update session in D1 (idempotent)
         await ensureSession(env, sessionId);
 
         // Get sandbox instance - same sessionId = same persistent container
-        const sandbox = getSandbox(env.Sandbox, sessionId);
+        sandbox = getSandbox(env.Sandbox, sessionId);
 
-        // Ensure mount point exists and mount R2 (idempotent)
+        // Ensure mount points exist
         await writer.write(
           encoder.encode(`data: ${JSON.stringify({ type: "status", message: "Mounting storage..." })}\n\n`)
         );
-        await sandbox.exec(`mkdir -p /storage`);
+        await sandbox.exec(`mkdir -p /storage/uploads /workspace/agent/outputs`);
 
-        // Mount R2 bucket (idempotent - handles already-mounted case)
-        await mountBucketSafe(sandbox, "fashion-shoot-storage", "/storage", {
+        // Mount uploads to /storage/uploads (for reference images)
+        await mountBucketSafe(sandbox, "fashion-shoot-storage", "/storage/uploads", {
           endpoint: `https://${env.CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
           provider: "r2",
           credentials: {
             accessKeyId: env.AWS_ACCESS_KEY_ID,
             secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
           },
+          prefix: "/uploads", // Only mount uploads subdirectory
         });
 
-        // Create output directories (idempotent)
-        await sandbox.exec(`mkdir -p /storage/outputs/${sessionId}/{frames,videos,final}`);
+        // Mount outputs directly to agent's working directory with session isolation
+        // Agent writes to outputs/ -> goes directly to R2 at outputs/{sessionId}/
+        await mountBucketSafe(sandbox, "fashion-shoot-storage", "/workspace/agent/outputs", {
+          endpoint: `https://${env.CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+          provider: "r2",
+          credentials: {
+            accessKeyId: env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+          },
+          prefix: `/outputs/${sessionId}`, // Session isolation - must start with /
+        });
+
+        // Create output subdirectories (idempotent)
+        await sandbox.exec(`mkdir -p /workspace/agent/outputs/{frames,videos,final}`);
 
         // Build full prompt with image references
         let fullPrompt = prompt;
@@ -297,112 +430,87 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
           encoder.encode(`data: ${JSON.stringify({ type: "status", message: "Starting agent..." })}\n\n`)
         );
 
-        // Run agent with execStream (non-blocking)
-        const execStream = await sandbox.execStream("npx tsx /workspace/agent-runner.ts", {
+        // Create session with env vars - these persist for ALL commands in the session
+        // including child processes spawned by Claude SDK's Bash tool
+        const session = await getOrCreateContainerSession(sandbox, sessionId, {
+          // API keys - will be inherited by child processes
+          ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+          FAL_KEY: env.FAL_KEY,
+          KLING_ACCESS_KEY: env.KLING_ACCESS_KEY,
+          KLING_SECRET_KEY: env.KLING_SECRET_KEY,
+          // Shell environment
+          HOME: "/root",
+          CI: "true",
+          CLAUDE_CODE_SKIP_EULA: "true",
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
+          TERM: "dumb",
+          NO_COLOR: "1",
+        });
+
+        // Run agent in the session - pass command-specific env vars
+        // Include CONTINUE and PIPELINE_STAGE for existing sessions
+        const execStream = await session.execStream("npx tsx /workspace/agent-runner.ts", {
           env: {
             PROMPT: fullPrompt,
             SESSION_ID: sessionId,
-            ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-            FAL_KEY: env.FAL_KEY,
-            KLING_ACCESS_KEY: env.KLING_ACCESS_KEY,
-            KLING_SECRET_KEY: env.KLING_SECRET_KEY,
-            HOME: "/root",
-            CI: "true",
-            CLAUDE_CODE_SKIP_EULA: "true",
-            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
-            TERM: "dumb",
-            NO_COLOR: "1",
+            ...(isContinuation ? {
+              CONTINUE: "true",
+              PIPELINE_STAGE: pipelineStage,
+            } : {}),
           },
           timeout: 600000, // 10 minutes
         });
 
-        // Track if we're in "thinking" mode (tool execution)
-        let isThinking = false;
-        let lastResponse = "";
-
         for await (const event of parseSSEStream<ExecEvent>(execStream)) {
-          // Translate container events to frontend-compatible SSE events
-          // DO NOT forward raw stdout/stderr - translate them instead
-
-          if (event.type === "stderr") {
-            const data = event.data as string;
-
-            // Parse JSON events from agent-runner
-            try {
-              const parsed = JSON.parse(data.trim());
-
-              if (parsed.t === "token") {
-                lastResponse += parsed.d;
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify({ type: "text_delta", text: parsed.d })}\n\n`)
-                );
-              } else if (parsed.t === "thinking") {
-                isThinking = true;
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify({ type: "message_type_hint", messageType: "thinking" })}\n\n`)
-                );
-              } else if (parsed.t === "tool") {
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify({
-                    type: "system",
-                    subtype: "tool_call",
-                    data: { tool_name: parsed.d }
-                  })}\n\n`)
-                );
-              } else if (parsed.t === "tool_done") {
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify({
-                    type: "system",
-                    subtype: "tool_result"
-                  })}\n\n`)
-                );
-              } else if (parsed.t === "assistant") {
-                await writer.write(
-                  encoder.encode(`data: ${JSON.stringify({
-                    type: "assistant_message",
-                    messageType: isThinking ? "thinking" : "response"
-                  })}\n\n`)
-                );
-                isThinking = false;
-                lastResponse = "";
-              }
-            } catch {
-              // Not JSON - log agent messages
-              if (data.includes("[agent]")) {
-                console.log("[agent]", data);
-              }
-            }
+          // Check if client disconnected
+          if (clientDisconnected) {
+            console.log(`[lifecycle] Client disconnected, breaking stream loop: ${sessionId}`);
+            break;
           }
-          // Checkpoint detection from stdout
-          else if (event.type === "stdout") {
+
+          // Forward stdout SSE events directly from agent-runner
+          // agent-runner.ts now emits SSE-formatted events to stdout
+
+          if (event.type === "stdout") {
             const data = event.data as string;
 
-            // Look for checkpoint markers
-            if (data.includes("[checkpoint]")) {
-              try {
-                const checkpointMatch = data.match(/\[checkpoint\]\s*(\{[\s\S]*?\})/);
-                if (checkpointMatch) {
-                  lastCheckpoint = JSON.parse(checkpointMatch[1]);
-                  await writer.write(
-                    encoder.encode(`data: ${JSON.stringify({ type: "checkpoint", checkpoint: lastCheckpoint })}\n\n`)
-                  );
+            // Forward SSE events (lines starting with "data:")
+            // agent-runner outputs: data: {"type":"text_delta",...}\n
+            for (const line of data.split("\n")) {
+              if (line.startsWith("data:")) {
+                // Forward directly - already SSE formatted
+                try {
+                  await writer.write(encoder.encode(line + "\n\n"));
+                } catch {
+                  // Client disconnected
+                  clientDisconnected = true;
+                  console.log(`[lifecycle] Client disconnected during write: ${sessionId}`);
+                  break;
                 }
-              } catch (e) {
-                // Ignore parse errors
+
+                // Track checkpoint for session update
+                try {
+                  const jsonStr = line.substring(5).trim(); // Remove "data:" prefix
+                  const parsed = JSON.parse(jsonStr);
+                  if (parsed.type === "checkpoint") {
+                    lastCheckpoint = parsed.checkpoint;
+                    // Check if pipeline is complete
+                    if (parsed.checkpoint?.stage === "complete") {
+                      pipelineCompleted = true;
+                    }
+                  }
+                } catch {
+                  // Ignore parse errors
+                }
               }
             }
-            // Final JSON result - parse and use response
-            else if (data.includes('"success"') && data.includes('"response"')) {
-              try {
-                const result = JSON.parse(data);
-                if (result.response && result.response !== lastResponse) {
-                  // If response differs from streamed content, update it
-                  // This ensures we have the complete response
-                  console.log("[stdout] Final response received");
-                }
-              } catch (e) {
-                // Ignore parse errors
-              }
+            if (clientDisconnected) break;
+          }
+          // Log stderr for debugging (agent logs, errors)
+          else if (event.type === "stderr") {
+            const data = event.data as string;
+            if (data.includes("[agent]") || data.includes("[tool]")) {
+              console.log(data);
             }
           }
           // Container start event
@@ -413,29 +521,47 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
           else if (event.type === "complete") {
             const exitCode = (event as any).exitCode ?? 0;
 
+            if (exitCode !== 0) {
+              hadError = true;
+            }
+
             // Update session in D1
             await updateSession(env, sessionId, {
               status: exitCode === 0 ? "completed" : "error",
               pipeline_stage: lastCheckpoint?.stage || "unknown",
             });
 
-            // Send complete event
-            await writer.write(
-              encoder.encode(`data: ${JSON.stringify({
-                type: "complete",
-                sessionId,
-                exitCode,
-                checkpoint: lastCheckpoint,
-                awaitingInput: !!lastCheckpoint,
-              })}\n\n`)
-            );
+            // Send complete event (if client still connected)
+            if (!clientDisconnected) {
+              try {
+                await writer.write(
+                  encoder.encode(`data: ${JSON.stringify({
+                    type: "complete",
+                    sessionId,
+                    exitCode,
+                    checkpoint: lastCheckpoint,
+                    awaitingInput: !!lastCheckpoint,
+                  })}\n\n`)
+                );
+              } catch {
+                clientDisconnected = true;
+              }
+            }
           }
         }
       } catch (error: any) {
+        hadError = true;
         console.error("Stream processing error:", error);
-        await writer.write(
-          encoder.encode(`data: ${JSON.stringify({ type: "error", error: error.message })}\n\n`)
-        );
+
+        if (!clientDisconnected) {
+          try {
+            await writer.write(
+              encoder.encode(`data: ${JSON.stringify({ type: "error", error: error.message })}\n\n`)
+            );
+          } catch {
+            clientDisconnected = true;
+          }
+        }
 
         // Update session as error
         await updateSession(env, sessionId, {
@@ -443,7 +569,22 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
           error_message: error.message,
         });
       } finally {
-        await writer.close();
+        clearInterval(heartbeatInterval);
+
+        // Handle container lifecycle based on what happened
+        if (sandbox) {
+          await handleContainerLifecycle(sandbox, sessionId, {
+            pipelineCompleted,
+            clientDisconnected,
+            hadError,
+          });
+        }
+
+        try {
+          await writer.close();
+        } catch {
+          // Writer already closed
+        }
       }
     })());
 

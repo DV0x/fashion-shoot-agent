@@ -5,6 +5,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.73",
     "@fal-ai/client": "^1.8.0",
+    "@techstark/opencv-js": "^4.12.0-release.1",
     "sharp": "^0.34.5",
     "zod": "^3.24.0",
     "tsx": "^4.19.0"

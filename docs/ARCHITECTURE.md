@@ -1,4 +1,8 @@
-# Fashion Shoot Agent - Architecture
+# Fashion Shoot Agent - Complete Architecture Documentation
+
+> **Purpose**: Comprehensive technical documentation for production deployment
+> **Last Updated**: 2025-01-14
+> **Version**: 2.0.0
 
 ## Overview
 
@@ -692,3 +696,67 @@ outputs/
 ```
 
 **Expected Turns:** 50-80 for full pipeline
+
+---
+
+## Detailed Component Reference
+
+### Frontend Components
+
+| Component | File | Props | Purpose |
+|-----------|------|-------|---------|
+| **App** | `App.tsx` | - | Root component, orchestrates state |
+| **AppShell** | `layout/AppShell.tsx` | `children`, `onReset?` | Layout wrapper with header/footer |
+| **ChatView** | `chat/ChatView.tsx` | `messages`, `isGenerating`, `activity?`, `onContinue?` | Message display with auto-scroll |
+| **ChatInput** | `chat/ChatInput.tsx` | `onSend`, `onUpload`, `uploadedImages`, `onRemoveImage`, `isGenerating`, `placeholder?` | User input with file upload |
+| **TextMessage** | `chat/TextMessage.tsx` | `message: TextMessage` | User/assistant text (markdown) |
+| **ThinkingMessage** | `chat/ThinkingMessage.tsx` | `message: ThinkingMessage` | Collapsible reasoning |
+| **ImageMessage** | `chat/ImageMessage.tsx` | `message: ImageMessage` | Single image with lightbox |
+| **ImageGrid** | `chat/ImageGrid.tsx` | `images: ImageMessage[]` | 3-column grid for 3+ images |
+| **VideoMessage** | `chat/VideoMessage.tsx` | `message: VideoMessage` | Single video with lightbox |
+| **VideoGrid** | `chat/VideoGrid.tsx` | `videos: VideoMessage[]` | 2-column grid for videos |
+| **CheckpointMessage** | `chat/CheckpointMessage.tsx` | `message: CheckpointMessage`, `onContinue?` | Pipeline checkpoint UI |
+| **ProgressMessage** | `chat/ProgressMessage.tsx` | `message: ProgressMessage` | Progress bar |
+| **Button** | `ui/Button.tsx` | `variant?`, `size?`, `isLoading?` | Primary button |
+| **IconButton** | `ui/IconButton.tsx` | `variant?`, `size?`, `label` | Icon-only button |
+| **Spinner** | `ui/Spinner.tsx` | `size?`, `className?` | Loading spinner |
+
+### Server Libraries
+
+| Library | File | Lines | Purpose |
+|---------|------|-------|---------|
+| **AIClient** | `lib/ai-client.ts` | 469 | Claude SDK wrapper, session management, PostToolUse hooks |
+| **SessionManager** | `lib/session-manager.ts` | 627 | Session lifecycle, persistence, pipeline tracking |
+| **SDKInstrumentor** | `lib/instrumentor.ts` | 394 | Telemetry, cost tracking, event logging |
+| **PromptGenerator** | `lib/prompt-generator.ts` | 283 | Dynamic system prompt from workflow config |
+| **CheckpointDetector** | `lib/checkpoint-detector.ts` | 141 | Config-driven checkpoint detection |
+| **OrchestratorPrompt** | `lib/orchestrator-prompt.ts` | 194 | Hardcoded system prompt fallback |
+
+### API Endpoints (Complete Reference)
+
+| Method | Endpoint | Request Body | Response | Description |
+|--------|----------|--------------|----------|-------------|
+| GET | `/health` | - | `{ status, agent, timestamp, config }` | Health check |
+| GET | `/workflows` | - | `{ success, workflows }` | List workflows |
+| POST | `/upload` | `FormData(images)` | `{ success, count, files }` | Upload images |
+| POST | `/generate` | `{ prompt, sessionId?, inputImages?, workflowType? }` | `{ success, sessionId, response, checkpoint, ... }` | Generate (blocking) |
+| POST | `/generate-stream` | `{ prompt, sessionId?, inputImages?, workflowType? }` | SSE stream | Generate (streaming) |
+| GET | `/sessions` | - | `{ success, count, sessions }` | List sessions |
+| GET | `/sessions/:id` | - | `{ success, session }` | Session details |
+| GET | `/sessions/:id/pipeline` | - | `{ success, pipeline }` | Pipeline status |
+| GET | `/sessions/:id/assets` | - | `{ success, assets }` | Generated assets |
+| POST | `/sessions/:id/continue` | `{ prompt? }` | Same as `/generate` | Continue (blocking) |
+| POST | `/sessions/:id/continue-stream` | `{ prompt? }` | SSE stream | Continue (streaming) |
+
+### SSE Event Types
+
+| Event Type | Data Fields | Description |
+|------------|-------------|-------------|
+| `session_init` | `sessionId` | Initial session ID |
+| `text_delta` | `text` | Token-by-token streaming |
+| `message_type_hint` | `messageType` | Early message type detection |
+| `assistant_message` | `content` | Complete assistant message |
+| `system` | `tool`, `action` | Tool call/response events |
+| `checkpoint` | `stage`, `artifact(s)`, `message` | Checkpoint detected |
+| `complete` | `sessionStats`, `checkpoint` | Final result |
+| `error` | `message` | Error occurred |

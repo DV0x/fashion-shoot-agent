@@ -15,6 +15,13 @@ import { execSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+
 // Parse command line arguments
 function parseArgs(): {
   input: string;
@@ -141,11 +148,8 @@ function normalizeFrame(input: string, output: string, targetWidth: number, targ
 async function main() {
   const { input, outputDir, cols, rows, padding, normalize } = parseArgs();
 
-  console.log(`\nCropping contact sheet using FFmpeg...`);
-  console.log(`  Input: ${input}`);
-  console.log(`  Output: ${outputDir}`);
-  console.log(`  Grid: ${cols}x${rows} (${cols * rows} frames)`);
-  if (padding > 0) console.log(`  Padding: ${padding}px`);
+  emitProgress(`[FFmpeg] Cropping contact sheet using FFmpeg...`);
+  emitProgress(`[FFmpeg] Grid: ${cols}x${rows} (${cols * rows} frames)`);
 
   // Check input exists
   if (!existsSync(input)) {
@@ -160,18 +164,18 @@ async function main() {
 
   // Get image dimensions
   const { width, height } = getImageDimensions(input);
-  console.log(`\n  Image dimensions: ${width}x${height}`);
+  emitProgress(`[FFmpeg] Image dimensions: ${width}x${height}`);
 
   // Calculate frame dimensions
   const frameWidth = Math.floor(width / cols);
   const frameHeight = Math.floor(height / rows);
-  console.log(`  Frame dimensions: ${frameWidth}x${frameHeight}`);
+  emitProgress(`[FFmpeg] Frame dimensions: ${frameWidth}x${frameHeight}`);
 
   // Crop each frame
   const totalFrames = cols * rows;
   const framePaths: string[] = [];
 
-  console.log(`\n  Extracting ${totalFrames} frames...`);
+  emitProgress(`[FFmpeg] Extracting ${totalFrames} frames...`);
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -180,18 +184,16 @@ async function main() {
       const y = row * frameHeight;
       const outputPath = join(outputDir, `frame-${frameNum}.png`);
 
-      process.stdout.write(`    Frame ${frameNum}/${totalFrames}: (${x}, ${y}) ${frameWidth}x${frameHeight}`);
+      emitProgress(`[FFmpeg] Extracting frame ${frameNum}/${totalFrames}`);
 
       cropFrame(input, outputPath, frameWidth, frameHeight, x, y, padding);
       framePaths.push(outputPath);
-
-      console.log(' ✓');
     }
   }
 
   // Normalize dimensions if enabled
   if (normalize) {
-    console.log(`\n  Normalizing frame dimensions...`);
+    emitProgress(`[FFmpeg] Normalizing frame dimensions...`);
     const { maxWidth, maxHeight } = findMaxDimensions(framePaths);
 
     // Only normalize if dimensions differ
@@ -205,15 +207,14 @@ async function main() {
     }
 
     if (needsNormalization) {
-      console.log(`    Target: ${maxWidth}x${maxHeight}`);
+      emitProgress(`[FFmpeg] Target: ${maxWidth}x${maxHeight}`);
       for (let i = 0; i < framePaths.length; i++) {
         const frame = framePaths[i];
-        process.stdout.write(`    Normalizing frame-${i + 1}.png...`);
+        emitProgress(`[FFmpeg] Normalizing frame-${i + 1}.png`);
         normalizeFrame(frame, frame, maxWidth, maxHeight);
-        console.log(' ✓');
       }
     } else {
-      console.log(`    All frames already uniform (${maxWidth}x${maxHeight})`);
+      emitProgress(`[FFmpeg] All frames already uniform (${maxWidth}x${maxHeight})`);
     }
   }
 
@@ -240,8 +241,8 @@ async function main() {
     }))
   };
 
-  console.log(`\n✅ Successfully extracted ${totalFrames} frames`);
-  console.log(`   Final dimensions: ${finalDims.width}x${finalDims.height}\n`);
+  emitProgress(`[FFmpeg] Successfully extracted ${totalFrames} frames`);
+  emitProgress(`[FFmpeg] Final dimensions: ${finalDims.width}x${finalDims.height}`);
   console.log(JSON.stringify(result, null, 2));
 }
 

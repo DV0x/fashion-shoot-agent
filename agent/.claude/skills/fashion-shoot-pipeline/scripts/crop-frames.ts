@@ -27,6 +27,13 @@ import { existsSync, mkdirSync } from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
 
+/**
+ * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ */
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+
 // Types
 interface CellBoundary {
   x: number;
@@ -377,12 +384,12 @@ async function detectGrid(
   expectedCols: number
 ): Promise<GridInfo> {
   await waitForOpenCV();
-  console.error("OpenCV loaded");
+  emitProgress("[Crop] OpenCV loaded");
 
   // Load image
-  console.error("Loading image...");
+  emitProgress("[Crop] Loading image...");
   const { mat, width, height } = await loadImageAsMat(imagePath);
-  console.error(`Image size: ${width}×${height}`);
+  emitProgress(`[Crop] Image size: ${width}×${height}`);
 
   // Convert to grayscale
   const gray = new cv.Mat();
@@ -391,7 +398,7 @@ async function detectGrid(
   // === VARIANCE-BASED GUTTER DETECTION ===
   // Find uniform regions (gutters) by detecting low-variance areas
   // Works for white, black, gray, or any solid-color gutters
-  console.error("\n--- Variance-Based Gutter Detection (Adaptive) ---");
+  emitProgress("[Crop] Detecting grid structure...");
 
   // Calculate expected cell size for adaptive min gutter width
   const expectedCellWidth = width / expectedCols;
@@ -623,7 +630,7 @@ async function cropFrames(
 ): Promise<CropResult[]> {
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
-    console.error(`Created output directory: ${outputDir}`);
+    emitProgress(`[Crop] Created output directory`);
   }
 
   const results: CropResult[] = [];
@@ -635,9 +642,7 @@ async function cropFrames(
       const cell = grid.cells[frameIndex];
       const outputPath = path.join(outputDir, `${prefix}-${frameNumber}.${outputFormat}`);
 
-      console.error(
-        `Cropping frame ${frameNumber} (row ${row}, col ${col}): x=${cell.x}, y=${cell.y}, ${cell.width}×${cell.height}`
-      );
+      emitProgress(`[Crop] Cropping frame ${frameNumber}/${grid.rows * grid.cols}`);
 
       await sharp(imagePath)
         .extract({
@@ -660,7 +665,7 @@ async function cropFrames(
         height: cell.height,
       });
 
-      console.error(`  Saved: ${outputPath}`);
+      emitProgress(`[Crop] Saved: ${path.basename(outputPath)}`);
     }
   }
 
@@ -681,8 +686,7 @@ async function normalizeFrames(
   const maxWidth = Math.max(...results.map((r) => r.width));
   const maxHeight = Math.max(...results.map((r) => r.height));
 
-  console.error(`\n--- Normalizing Frames ---`);
-  console.error(`Target dimensions: ${maxWidth}×${maxHeight}`);
+  emitProgress(`[Crop] Normalizing frames to ${maxWidth}×${maxHeight}`);
 
   // Check if normalization is actually needed
   const needsNormalization = results.some(
@@ -690,20 +694,17 @@ async function normalizeFrames(
   );
 
   if (!needsNormalization) {
-    console.error(`All frames already uniform - no normalization needed.`);
+    emitProgress(`[Crop] All frames already uniform`);
     return { width: maxWidth, height: maxHeight };
   }
 
   // Normalize each frame
   for (const result of results) {
     if (result.width === maxWidth && result.height === maxHeight) {
-      console.error(`  frame-${result.frameNumber}: already ${maxWidth}×${maxHeight} - skipped`);
       continue;
     }
 
-    console.error(
-      `  frame-${result.frameNumber}: ${result.width}×${result.height} → ${maxWidth}×${maxHeight}`
-    );
+    emitProgress(`[Crop] Normalizing frame-${result.frameNumber}`);
 
     // Read the current frame
     const inputBuffer = await sharp(result.outputPath).toBuffer();
@@ -723,7 +724,7 @@ async function normalizeFrames(
     result.height = maxHeight;
   }
 
-  console.error(`Normalized ${results.length} frames to ${maxWidth}×${maxHeight}`);
+  emitProgress(`[Crop] Normalized ${results.length} frames to ${maxWidth}×${maxHeight}`);
 
   return { width: maxWidth, height: maxHeight };
 }
@@ -838,18 +839,13 @@ async function main() {
       throw new Error(`Input file not found: ${args.inputPath}`);
     }
 
-    console.error(`\nCropping contact sheet into ${args.rows * args.cols} frames...\n`);
+    emitProgress(`[Crop] Cropping contact sheet into ${args.rows * args.cols} frames`);
 
     // Detect grid structure
-    console.error("--- Detecting Grid Structure ---\n");
     const grid = await detectGrid(args.inputPath, args.rows, args.cols);
-
-    console.error("\nDetected grid parameters:");
-    console.error(`  Cells: ${grid.cells.length} (${grid.cols}×${grid.rows})`);
-    console.error(`  Detected gutter: ${grid.detectedGutterX}px horizontal, ${grid.detectedGutterY}px vertical`);
+    emitProgress(`[Crop] Detected ${grid.cells.length} cells (${grid.cols}×${grid.rows})`);
 
     // Crop frames
-    console.error("\n--- Cropping Frames ---\n");
     const results = await cropFrames(
       args.inputPath,
       grid,
@@ -858,14 +854,14 @@ async function main() {
       args.prefix
     );
 
-    console.error(`\nSuccessfully cropped ${results.length} frames.`);
+    emitProgress(`[Crop] Successfully cropped ${results.length} frames`);
 
     // Normalize frames to uniform dimensions (unless --no-normalize)
     let normalizedDimensions: NormalizedDimensions | null = null;
     if (args.normalize) {
       normalizedDimensions = await normalizeFrames(results, args.outputFormat);
     } else {
-      console.error(`\nSkipping normalization (--no-normalize flag set)`);
+      emitProgress(`[Crop] Skipping normalization`);
     }
 
     // Output JSON result to stdout (for pipeline integration)
