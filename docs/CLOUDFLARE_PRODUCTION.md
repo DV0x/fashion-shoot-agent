@@ -2,7 +2,7 @@
 
 > **Purpose**: Production deployment documentation for Fashion Shoot Agent on Cloudflare
 > **Last Updated**: 2026-01-17
-> **Status**: Production Ready (Phases 1-9 Implemented)
+> **Status**: Production Ready (with SSE progress streaming)
 
 ---
 
@@ -689,7 +689,7 @@ The system prompt defines a 6-phase workflow:
 
 ### 7.3 Checkpoint Detection
 
-Checkpoints are detected via PostToolUse hooks:
+Checkpoints are detected via PostToolUse hooks. **Critical:** Clips checkpoint must be checked BEFORE complete to avoid false positives.
 
 ```typescript
 function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): void {
@@ -706,14 +706,64 @@ function detectCheckpoint(toolName: string, toolInput: any, toolResponse: any): 
       type: "image",
       message: 'Hero image ready. Reply "continue" or describe changes.'
     });
+    return;
   }
-  // ... more checkpoints
+
+  // Clips checkpoint (MUST be checked BEFORE complete)
+  // Only triggers when generate-video.ts creates video-5.mp4 (the 5th clip)
+  if (command.includes("generate-video.ts") && output.includes("video-5.mp4")) {
+    emitCheckpoint({
+      stage: "clips",
+      status: "complete",
+      artifacts: [
+        `${sessionPrefix}/videos/video-1.mp4`,
+        `${sessionPrefix}/videos/video-2.mp4`,
+        `${sessionPrefix}/videos/video-3.mp4`,
+        `${sessionPrefix}/videos/video-4.mp4`,
+        `${sessionPrefix}/videos/video-5.mp4`,
+      ],
+      type: "video",
+      message: "5 clips ready. Choose speed or regenerate any clip.",
+    });
+    return;
+  }
+
+  // Complete checkpoint (AFTER clips check)
+  // Only triggers when stitch-videos-eased.ts creates the final video
+  if (command.includes("stitch-videos-eased.ts") && output.includes("fashion-video.mp4")) {
+    emitCheckpoint({
+      stage: "complete",
+      status: "complete",
+      artifact: `${sessionPrefix}/final/fashion-video.mp4`,
+      type: "video",
+      message: "Fashion video complete!",
+      isFinal: true,
+    });
+    return;
+  }
 }
 
 function emitCheckpoint(checkpoint: any): void {
   console.log(`[checkpoint] ${JSON.stringify(checkpoint)}`);
 }
 ```
+
+**Important:** The order of checkpoint detection matters. If "complete" is checked before "clips", any tool output mentioning "fashion-video.mp4" would trigger the complete checkpoint prematurely.
+
+### 7.4 Pipeline Scripts with SSE Progress
+
+All pipeline scripts emit real-time progress via `emitProgress()` helper function:
+
+| Script | Prefix | Progress Examples |
+|--------|--------|-------------------|
+| `generate-image.ts` | `[FAL]` | Uploading, generating, saved |
+| `generate-video.ts` | `[Kling]` | Encoding frames, creating task, polling status |
+| `crop-frames.ts` | `[Crop]` | Loading image, detecting grid, cropping frames |
+| `crop-frames-ffmpeg.ts` | `[FFmpeg]` | Extracting frames, normalizing |
+| `resize-frames.ts` | `[Resize]` | Resizing frames to aspect ratio |
+| `stitch-videos-eased.ts` | `[Stitch]` | Analyzing clips, extracting frames, encoding |
+
+Scripts output SSE events directly to stdout, which are captured by the container and forwarded to the client via the Worker's SSE stream.
 
 ---
 
@@ -978,6 +1028,7 @@ Supports HTTP Range requests for video streaming.
 |------------|--------|-------------|
 | `session_init` | `sessionId` | Initial session ID |
 | `status` | `message` | Status update |
+| `script_status` | `message` | Real-time progress from pipeline scripts |
 | `text_delta` | `text` | Token-by-token streaming |
 | `message_type_hint` | `messageType` | Early message type detection |
 | `assistant_message` | `content` | Complete assistant message |
@@ -985,6 +1036,25 @@ Supports HTTP Range requests for video streaming.
 | `checkpoint` | `stage`, `artifact(s)`, `message`, `sessionId`, `awaitingInput` | Checkpoint detected |
 | `complete` | `sessionStats`, `checkpoint` | Generation complete |
 | `error` | `message` | Error occurred |
+
+### 10.1.1 Script Status Events
+
+Pipeline scripts emit real-time progress via `script_status` events. Each script uses an `emitProgress()` helper:
+
+```typescript
+// In each script (generate-image.ts, generate-video.ts, etc.)
+function emitProgress(message: string): void {
+  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+}
+```
+
+**Example script_status messages:**
+- `[FAL] Uploading reference image...`
+- `[FAL] Generating image...`
+- `[Kling] Creating video task...`
+- `[Kling] Status: processing (attempt 5/120)...`
+- `[Stitch] Extracting speed-curved frames...`
+- `[Crop] Cropping frame 3/6`
 
 ### 10.2 Event Flow
 
@@ -998,7 +1068,11 @@ Supports HTTP Range requests for video streaming.
 ← data: {"type":"text_delta","text":" a"}
 ...
 
-← data: {"type":"system","subtype":"tool_call","data":{"tool_name":"Skill"}}
+← data: {"type":"system","subtype":"tool_call","data":{"tool_name":"Bash"}}
+
+← data: {"type":"script_status","message":"[FAL] Uploading reference image..."}
+← data: {"type":"script_status","message":"[FAL] Generating image..."}
+← data: {"type":"script_status","message":"[FAL] Saved: hero.png"}
 
 ← data: {"type":"checkpoint","stage":"hero","artifact":"outputs/.../hero.png","message":"Hero image ready...","sessionId":"session_...","awaitingInput":true}
 
@@ -1017,6 +1091,9 @@ eventSource.onmessage = (event) => {
   switch (data.type) {
     case 'text_delta':
       appendToMessage(data.text);
+      break;
+    case 'script_status':
+      showScriptProgress(data.message);  // e.g., "[FAL] Generating image..."
       break;
     case 'checkpoint':
       showCheckpoint(data);
