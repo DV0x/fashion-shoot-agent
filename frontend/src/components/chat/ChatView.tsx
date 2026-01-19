@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType } from '../../lib/types';
+import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType, ContentBlock } from '../../lib/types';
 import { TextMessage } from './TextMessage';
 import { ThinkingMessage } from './ThinkingMessage';
 import { ImageMessage } from './ImageMessage';
@@ -9,11 +9,13 @@ import { VideoGrid } from './VideoGrid';
 import { CheckpointMessage } from './CheckpointMessage';
 import { ProgressMessage } from './ProgressMessage';
 import { VideoMessage } from './VideoMessage';
+import { ToolCallBlock } from './ToolCallBlock';
 
 interface ChatViewProps {
   messages: ChatMessage[];
   isGenerating: boolean;
   activity?: string | null;
+  currentBlocks?: Map<number, ContentBlock>;  // Phase 7: Streaming blocks
   onContinue?: (options?: string) => void;
 }
 
@@ -73,12 +75,18 @@ function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   return groups;
 }
 
-export function ChatView({ messages, isGenerating, activity, onContinue }: ChatViewProps) {
+export function ChatView({ messages, isGenerating, activity, currentBlocks, onContinue }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Phase 7: Convert currentBlocks to array for rendering
+  const streamingBlocks = useMemo(() => {
+    if (!currentBlocks || currentBlocks.size === 0) return [];
+    return Array.from(currentBlocks.values()).sort((a, b) => a.index - b.index);
+  }, [currentBlocks]);
 
   // Group consecutive images for grid display
   const messageGroups = useMemo(() => groupMessages(messages), [messages]);
@@ -174,6 +182,34 @@ export function ChatView({ messages, isGenerating, activity, onContinue }: ChatV
         <AnimatePresence initial={false}>
           {messageGroups.map((group) => renderGroup(group))}
         </AnimatePresence>
+
+        {/* Phase 7: Streaming blocks display during generation */}
+        {isGenerating && streamingBlocks.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-[75%]"
+          >
+            <div className="thinking-message">
+              {/* Text blocks */}
+              {streamingBlocks
+                .filter(b => b.type === 'text' || b.type === 'thinking')
+                .map(block => (
+                  <p key={block.id} className="text-sm text-text-muted whitespace-pre-wrap break-words">
+                    {block.content}
+                    {block.isStreaming && <span className="animate-pulse">|</span>}
+                  </p>
+                ))}
+
+              {/* Tool blocks */}
+              {streamingBlocks
+                .filter(b => b.type === 'tool_use')
+                .map(block => (
+                  <ToolCallBlock key={block.id} block={block} />
+                ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Thinking/Activity indicator with 3-dot animation */}
         {isGenerating && (

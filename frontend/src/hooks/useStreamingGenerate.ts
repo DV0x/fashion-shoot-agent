@@ -12,6 +12,7 @@ import type {
   UploadedFile,
   PresetSelection,
   MessageRole,
+  ContentBlock,
 } from '../lib/types';
 import { uploadImages } from '../lib/api';
 
@@ -29,6 +30,13 @@ interface SessionState {
   uploadedImages: UploadedFile[];
   presets: PresetSelection;
   activity: string | null; // Current activity for thinking indicator
+  currentBlocks: Map<number, ContentBlock>; // Phase 7: Block-level tracking
+}
+
+// Block accumulator for tracking streaming blocks
+interface BlockAccumulator {
+  blocks: Map<number, ContentBlock>;
+  toolInputBuffers: Map<number, string>;  // Accumulate partial JSON for tool inputs
 }
 
 const initialState: SessionState = {
@@ -48,6 +56,7 @@ const initialState: SessionState = {
     background: 'studio-grey',
   },
   activity: null,
+  currentBlocks: new Map(),
 };
 
 
@@ -77,6 +86,15 @@ export function useStreamingGenerate() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const accumulatedTextRef = useRef<string>('');
+
+  // Phase 7: Block accumulator for tracking content blocks
+  const blockAccumulatorRef = useRef<BlockAccumulator>({
+    blocks: new Map(),
+    toolInputBuffers: new Map(),
+  });
+
+  // Throttle UI updates for smooth 60fps rendering
+  const updateThrottleRef = useRef<number | null>(null);
 
   const addMessage = useCallback((message: AddMessageInput): ChatMessage => {
     const id = crypto.randomUUID();
@@ -133,6 +151,224 @@ export function useStreamingGenerate() {
 
   const setActivity = useCallback((activity: string | null) => {
     setState((prev) => ({ ...prev, activity }));
+  }, []);
+
+  // Phase 7: Block handling functions
+  const handleBlockStart = useCallback((event: {
+    blockIndex: number;
+    blockType: string;
+    toolName?: string;
+    toolId?: string;
+  }) => {
+    const block: ContentBlock = {
+      id: `block-${event.blockIndex}-${Date.now()}`,
+      index: event.blockIndex,
+      type: event.blockType as ContentBlock['type'],
+      content: '',
+      isStreaming: true,
+      isComplete: false,
+      toolName: event.toolName,
+      toolId: event.toolId,
+    };
+
+    blockAccumulatorRef.current.blocks.set(event.blockIndex, block);
+
+    // Initialize tool input buffer for tool_use blocks
+    if (event.blockType === 'tool_use') {
+      blockAccumulatorRef.current.toolInputBuffers.set(event.blockIndex, '');
+      // Update activity indicator
+      if (event.toolName) {
+        setActivity(getActivityLabel(event.toolName));
+      }
+    }
+
+    // Update state with new blocks (throttled)
+    if (updateThrottleRef.current === null) {
+      updateThrottleRef.current = requestAnimationFrame(() => {
+        setState((prev) => ({
+          ...prev,
+          currentBlocks: new Map(blockAccumulatorRef.current.blocks),
+        }));
+        updateThrottleRef.current = null;
+      });
+    }
+  }, [setActivity]);
+
+  const handleBlockDelta = useCallback((event: {
+    blockIndex: number;
+    text?: string;
+    inputJsonDelta?: string;
+  }) => {
+    const block = blockAccumulatorRef.current.blocks.get(event.blockIndex);
+    if (!block) return;
+
+    // Accumulate text content
+    if (event.text) {
+      block.content += event.text;
+    }
+
+    // Accumulate tool input JSON
+    if (event.inputJsonDelta) {
+      const buffer = blockAccumulatorRef.current.toolInputBuffers.get(event.blockIndex) || '';
+      blockAccumulatorRef.current.toolInputBuffers.set(event.blockIndex, buffer + event.inputJsonDelta);
+    }
+
+    // Throttle UI updates to 60fps with RAF batching
+    if (updateThrottleRef.current === null) {
+      updateThrottleRef.current = requestAnimationFrame(() => {
+        // Build current text from all text/thinking blocks for real-time display
+        const allTextContent = Array.from(blockAccumulatorRef.current.blocks.values())
+          .filter(b => b.type === 'text' || b.type === 'thinking')
+          .map(b => b.content)
+          .join('\n');
+
+        setState((prev) => {
+          // Update both currentBlocks AND the streaming message content
+          const currentId = streamingMessageIdRef.current;
+          if (!currentId) {
+            return { ...prev, currentBlocks: new Map(blockAccumulatorRef.current.blocks) };
+          }
+
+          const updatedMessages = prev.messages.map((msg) => {
+            if (msg.id === currentId && (msg.type === 'text' || msg.type === 'thinking')) {
+              return { ...msg, content: allTextContent };
+            }
+            return msg;
+          });
+
+          return {
+            ...prev,
+            messages: updatedMessages,
+            streamingText: allTextContent,
+            currentBlocks: new Map(blockAccumulatorRef.current.blocks),
+          };
+        });
+
+        updateThrottleRef.current = null;
+      });
+    }
+  }, []);
+
+  const handleBlockEnd = useCallback((event: {
+    blockIndex: number;
+    toolInput?: Record<string, unknown>;
+    toolDuration?: number;
+  }) => {
+    const block = blockAccumulatorRef.current.blocks.get(event.blockIndex);
+    if (!block) return;
+
+    block.isStreaming = false;
+    block.isComplete = true;
+
+    // Parse tool input from server or from accumulated buffer
+    if (event.toolInput) {
+      block.toolInput = event.toolInput;
+    } else if (block.type === 'tool_use') {
+      const buffer = blockAccumulatorRef.current.toolInputBuffers.get(event.blockIndex);
+      if (buffer) {
+        try {
+          block.toolInput = JSON.parse(buffer);
+        } catch (e) {
+          // JSON parsing failed, leave undefined
+        }
+      }
+    }
+
+    if (event.toolDuration) {
+      block.toolDuration = event.toolDuration;
+    }
+
+    // Clear tool input buffer
+    blockAccumulatorRef.current.toolInputBuffers.delete(event.blockIndex);
+
+    // Clear activity when tool completes
+    if (block.type === 'tool_use') {
+      setActivity(null);
+    }
+
+    setState((prev) => ({
+      ...prev,
+      currentBlocks: new Map(blockAccumulatorRef.current.blocks),
+    }));
+  }, [setActivity]);
+
+  // Convert accumulated blocks into a ChatMessage
+  // Updates the existing streaming placeholder instead of creating new messages
+  const finalizeBlocksToMessage = useCallback(() => {
+    const blocks = blockAccumulatorRef.current.blocks;
+    if (blocks.size === 0) return;
+
+    // Check if any blocks are tool_use → ThinkingMessage
+    const hasToolUse = Array.from(blocks.values()).some(b => b.type === 'tool_use');
+
+    // Extract text content from text/thinking blocks
+    const textContent = Array.from(blocks.values())
+      .filter(b => b.type === 'text' || b.type === 'thinking')
+      .map(b => b.content)
+      .join('\n');
+
+    const currentStreamingId = streamingMessageIdRef.current;
+
+    setState((prev) => {
+      // If we have an existing streaming placeholder, update it
+      if (currentStreamingId) {
+        const updatedMessages = prev.messages.map((msg) => {
+          if (msg.id === currentStreamingId) {
+            if (hasToolUse) {
+              // Convert to ThinkingMessage
+              return {
+                ...msg,
+                type: 'thinking' as const,
+                content: textContent,
+                blocks: Array.from(blocks.values()),
+                isStreaming: false,
+              };
+            } else {
+              // Update as TextMessage
+              return {
+                ...msg,
+                type: 'text' as const,
+                content: textContent,
+                isStreaming: false,
+              };
+            }
+          }
+          return msg;
+        });
+        return { ...prev, messages: updatedMessages, currentBlocks: new Map() };
+      }
+
+      // No existing placeholder - create new message (fallback)
+      if (hasToolUse) {
+        const thinkingMessage: ThinkingMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          type: 'thinking',
+          content: textContent,
+          blocks: Array.from(blocks.values()),
+          timestamp: new Date(),
+        };
+        return { ...prev, messages: [...prev.messages, thinkingMessage], currentBlocks: new Map() };
+      } else if (textContent.trim()) {
+        const textMessage: TextMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          type: 'text',
+          content: textContent,
+          isStreaming: false,
+          timestamp: new Date(),
+        };
+        return { ...prev, messages: [...prev.messages, textMessage], currentBlocks: new Map() };
+      }
+
+      return { ...prev, currentBlocks: new Map() };
+    });
+
+    // Reset block accumulator
+    blockAccumulatorRef.current = {
+      blocks: new Map(),
+      toolInputBuffers: new Map(),
+    };
   }, []);
 
   const updatePresets = useCallback((presets: Partial<PresetSelection>) => {
@@ -267,6 +503,46 @@ export function useStreamingGenerate() {
         }));
         break;
 
+      // Phase 7: Block-level events
+      case 'block_start':
+        handleBlockStart({
+          blockIndex: data.blockIndex as number,
+          blockType: data.blockType as string,
+          toolName: data.toolName as string | undefined,
+          toolId: data.toolId as string | undefined,
+        });
+        break;
+
+      case 'block_delta':
+        handleBlockDelta({
+          blockIndex: data.blockIndex as number,
+          text: data.text as string | undefined,
+          inputJsonDelta: data.inputJsonDelta as string | undefined,
+        });
+        // Phase 7: Block system handles accumulation, no legacy append needed
+        break;
+
+      case 'block_end':
+        handleBlockEnd({
+          blockIndex: data.blockIndex as number,
+          toolInput: data.toolInput as Record<string, unknown> | undefined,
+          toolDuration: data.toolDuration as number | undefined,
+        });
+        break;
+
+      case 'message_start':
+        // New message starting - reset block accumulator
+        blockAccumulatorRef.current = {
+          blocks: new Map(),
+          toolInputBuffers: new Map(),
+        };
+        break;
+
+      case 'message_stop':
+        // Message complete - finalize blocks into a message
+        finalizeBlocksToMessage();
+        break;
+
       case 'message_type_hint': {
         // Early hint that current message will be thinking (has tool_use)
         // Convert current streaming message to thinking type immediately
@@ -290,8 +566,9 @@ export function useStreamingGenerate() {
       }
 
       case 'text_delta':
-        // Token-by-token streaming - goes to current message (text or thinking)
-        appendToStreamingMessage(data.text as string);
+        // Phase 7: Ignored - server sends both block_delta and text_delta for same content
+        // Block system handles accumulation via block_delta events
+        // This prevents duplicate text accumulation
         break;
 
       case 'assistant_message': {
@@ -357,8 +634,26 @@ export function useStreamingGenerate() {
         break;
       }
 
+      case 'progress': {
+        // Progress event from PostToolUse hooks (Phase 3 architecture)
+        const progress = data.progress as Checkpoint;
+        console.log('[SSE DEBUG] Received progress event:', progress?.stage);
+
+        if (progress && (progress.artifact || progress.artifacts?.length)) {
+          // Add artifact images/videos
+          addArtifactMessages(progress);
+          // Add checkpoint message for UI
+          addMessage({
+            role: 'system',
+            type: 'checkpoint',
+            checkpoint: progress,
+          });
+        }
+        break;
+      }
+
       case 'checkpoint': {
-        // Checkpoint detected via hook (sent immediately)
+        // Legacy checkpoint event (fallback)
         const checkpoint = data.checkpoint as Checkpoint;
         console.log('[SSE DEBUG] Received checkpoint event:', checkpoint?.stage);
 
@@ -418,6 +713,17 @@ export function useStreamingGenerate() {
         streamingMessageIdRef.current = null;
         break;
       }
+
+      case 'cancelled':
+        setState((prev) => ({
+          ...prev,
+          isGenerating: false,
+          streamingMessageId: null,
+          activity: null,
+          error: null,
+        }));
+        streamingMessageIdRef.current = null;
+        break;
 
       case 'error':
         setState((prev) => ({
@@ -492,7 +798,7 @@ export function useStreamingGenerate() {
         setActivity('Container running...');
         break;
     }
-  }, [appendToStreamingMessage, addMessage, addArtifactMessages, setActivity]);
+  }, [appendToStreamingMessage, addMessage, addArtifactMessages, setActivity, handleBlockStart, handleBlockDelta, handleBlockEnd, finalizeBlocksToMessage]);
 
   const sendMessage = useCallback(
     async (prompt: string) => {
@@ -761,11 +1067,51 @@ export function useStreamingGenerate() {
     setState(initialState);
   }, []);
 
+  // Cancel active generation via REST API
+  const cancelGeneration = useCallback(async () => {
+    if (!state.sessionId || !state.isGenerating) {
+      return;
+    }
+
+    console.log('[CANCEL] Cancelling generation for session:', state.sessionId);
+
+    // Abort the SSE stream on client side
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    try {
+      // Call cancel endpoint to abort server-side generation
+      const response = await fetch(`/api/sessions/${state.sessionId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        console.error('[CANCEL] Server cancel failed:', response.status);
+      }
+    } catch (error) {
+      console.error('[CANCEL] Error cancelling:', error);
+    }
+
+    // Update UI state
+    setState((prev) => ({
+      ...prev,
+      isGenerating: false,
+      streamingMessageId: null,
+      activity: null,
+    }));
+
+    streamingMessageIdRef.current = null;
+  }, [state.sessionId, state.isGenerating]);
+
   return {
     ...state,
     sendMessage,
     continueGeneration,
     continueSession,
+    cancelGeneration,
     resetSession,
     handleUpload,
     removeUploadedImage,

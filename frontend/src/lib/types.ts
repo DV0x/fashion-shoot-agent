@@ -96,6 +96,23 @@ export interface BaseMessage {
   timestamp: Date;
 }
 
+// Content Block Types for streaming
+export interface ContentBlock {
+  id: string;
+  index: number;                 // SDK block index (0, 1, 2...)
+  type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
+  content: string;               // Accumulated text for text/thinking blocks
+  isStreaming: boolean;          // Currently receiving deltas
+  isComplete: boolean;           // Block finished (content_block_stop received)
+
+  // Tool-specific fields
+  toolName?: string;             // Name of tool being called
+  toolId?: string;               // SDK tool_use ID
+  toolInput?: Record<string, unknown>;
+  toolResult?: string;           // Result after execution
+  toolDuration?: number;         // Execution time in ms
+}
+
 export interface TextMessage extends BaseMessage {
   type: 'text';
   content: string;
@@ -105,6 +122,7 @@ export interface TextMessage extends BaseMessage {
 export interface ThinkingMessage extends BaseMessage {
   type: 'thinking';
   content: string;
+  blocks?: ContentBlock[];  // Full blocks for expanded view
   isCollapsed?: boolean;
 }
 

@@ -28,10 +28,17 @@ import * as path from "path";
 import { parseArgs } from "util";
 
 /**
- * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ * Emit progress as JSON event to stdout
  */
 function emitProgress(message: string): void {
-  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+  console.log(JSON.stringify({ type: "progress", message }));
+}
+
+/**
+ * Emit artifacts event for multiple files (e.g., frames)
+ */
+function emitArtifacts(paths: string[], artifactType: "image-grid" | "video-grid"): void {
+  console.log(JSON.stringify({ type: "artifacts", paths, artifactType }));
 }
 
 // Types
@@ -857,40 +864,15 @@ async function main() {
     emitProgress(`[Crop] Successfully cropped ${results.length} frames`);
 
     // Normalize frames to uniform dimensions (unless --no-normalize)
-    let normalizedDimensions: NormalizedDimensions | null = null;
     if (args.normalize) {
-      normalizedDimensions = await normalizeFrames(results, args.outputFormat);
+      await normalizeFrames(results, args.outputFormat);
     } else {
       emitProgress(`[Crop] Skipping normalization`);
     }
 
-    // Output JSON result to stdout (for pipeline integration)
-    console.log(
-      JSON.stringify(
-        {
-          success: true,
-          framesCount: results.length,
-          normalized: args.normalize,
-          normalizedDimensions: normalizedDimensions,
-          grid: {
-            rows: grid.rows,
-            cols: grid.cols,
-            detectedGutterX: grid.detectedGutterX,
-            detectedGutterY: grid.detectedGutterY,
-          },
-          frames: results.map((r) => ({
-            frameNumber: r.frameNumber,
-            outputPath: r.outputPath,
-            x: r.x,
-            y: r.y,
-            width: r.width,
-            height: r.height,
-          })),
-        },
-        null,
-        2
-      )
-    );
+    // Emit artifacts event for frontend
+    const framePaths = results.map((r) => r.outputPath);
+    emitArtifacts(framePaths, "image-grid");
   } catch (error) {
     console.error("Error:", error instanceof Error ? error.message : error);
     process.exit(1);

@@ -86,6 +86,17 @@ export async function continueSession(
   return handleResponse(response);
 }
 
+// Cancel active generation
+export async function cancelGeneration(
+  sessionId: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return handleResponse(response);
+}
+
 // Upload images
 export async function uploadImages(files: File[]): Promise<UploadResponse> {
   const formData = new FormData();

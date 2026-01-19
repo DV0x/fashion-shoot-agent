@@ -9,33 +9,12 @@ Execute the generation pipeline using FAL.ai (images), Kling AI (videos), and FF
 
 ## Prerequisite
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. Use Skill tool → `editorial-photography` → Get prompts      │
-│  2. Use Skill tool → THIS skill → Execute scripts               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**NEVER write your own prompts.** Get them from `editorial-photography` skill first.
-
-## Pipeline Execution Order
+**ALWAYS activate the editorial-photography skill first** to get prompt templates and presets.
 
 ```
-1. generate-image.ts (HERO)      → outputs/hero.png           [CHECKPOINT]
-2. generate-image.ts (CONTACT)   → outputs/contact-sheet.png  [CHECKPOINT]
-3. crop-frames.ts                → outputs/frames/frame-{1-6}.png  [CHECKPOINT]
-4. resize-frames.ts (OPTIONAL)   → outputs/frames/frame-{1-6}.png (resized)
-5. generate-video.ts × 5         → outputs/videos/video-{1-5}.mp4 (frame pairs)
-6. stitch-videos-eased.ts        → outputs/final/fashion-video.mp4
+1. Skill tool → editorial-photography → Get prompts and presets
+2. Skill tool → THIS skill → Execute scripts with those prompts
 ```
-
-**Note:** Video generation uses frame PAIRS (5 videos from 6 frames, + optional loop):
-- video-1: frame-1 → frame-2
-- video-2: frame-2 → frame-3
-- video-3: frame-3 → frame-4
-- video-4: frame-4 → frame-5
-- video-5: frame-5 → frame-6
-- video-6: frame-6 → frame-1 (OPTIONAL - only if loop enabled)
 
 ## Directory Setup (Run First)
 
@@ -45,88 +24,97 @@ mkdir -p outputs/frames outputs/videos outputs/final
 
 ---
 
-## Script: generate-image.ts
+## Available Operations
 
-Generate images via FAL.ai nano-banana-pro.
+### Generate Image
 
+**Purpose:** Create hero shots, contact sheets, or regenerate individual frames using AI image generation.
+
+**When to use:**
+- Starting a new shoot (hero image with reference images)
+- Creating the 2×3 contact sheet grid
+- Regenerating specific frames when user requests changes
+- Creating variations with different presets
+
+**Command:**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-image.ts \
   --prompt "<PROMPT_FROM_EDITORIAL_PHOTOGRAPHY>" \
   --input ref1.jpg --input ref2.jpg \
-  --output output.png \
+  --output outputs/hero.png \
   --aspect-ratio 3:2 \
   --resolution 2K
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--prompt` | Yes | - | Filled prompt from editorial-photography |
-| `--input` | No | - | Reference image paths (multiple allowed) |
+**Parameters:**
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `--prompt` | Yes | - | Filled prompt template from editorial-photography skill |
+| `--input` | No | - | Reference image paths (can specify multiple) |
 | `--output` | Yes | - | Output file path |
-| `--aspect-ratio` | No | 3:2 | 3:2, 16:9, 1:1, etc. |
-| `--resolution` | No | 1K | 1K, 2K, 4K |
+| `--aspect-ratio` | No | 3:2 | Aspect ratio: 3:2, 16:9, 9:16, 1:1, etc. |
+| `--resolution` | No | 1K | Resolution: 1K, 2K, 4K |
 
-**Errors:**
-- `FAL_KEY not set` → Add FAL_KEY to .env file
+**Error handling:**
+- `FAL_KEY not set` → Add FAL_KEY to .env
 - `Request failed` → Retry once, then report to user
 
 ---
 
-## Script: crop-frames.ts
+### Crop Frames
 
-Crop contact sheet into individual frames (LOCAL - no API). Auto-detects grid gutters using variance-based detection.
+**Purpose:** Extract individual frames from the 2×3 contact sheet grid.
 
+**When to use:**
+- After contact sheet is generated and approved by user
+- Uses variance-based gutter detection to find frame boundaries
+
+**Command:**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames.ts \
   --input outputs/contact-sheet.png \
   --output-dir outputs/frames/
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
+**Parameters:**
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
 | `--input` | Yes | - | Contact sheet image path |
-| `--output-dir` | Yes | - | Output directory for frames |
+| `--output-dir` | Yes | - | Directory for extracted frames |
 | `--rows` | No | 2 | Grid rows |
 | `--cols` | No | 3 | Grid columns |
 
 **Output:** `frame-1.png` through `frame-6.png` (auto-normalized to uniform dimensions)
 
-**Features:**
-- Auto-detects gutter sizes using variance-based detection
-- Normalizes all frames to identical dimensions
-- Works with any gutter color (white, black, gray)
-- Zero API calls - pure local processing
+**Error handling:**
+- `Gutter detection failed` → Use fallback below
 
-**Errors:**
-- `Input not found` → Check contact-sheet.png exists
-- `Gutter detection failed` → **Use fallback script below**
+#### Fallback: crop-frames-ffmpeg.ts
 
-### Fallback: crop-frames-ffmpeg.ts
+**Purpose:** Alternative frame extraction using simple math division (no gutter detection).
 
-**If `crop-frames.ts` fails** (gutter detection error), use the FFmpeg fallback which uses simple math division:
+**When to use:**
+- When `crop-frames.ts` fails due to minimal/no gutters in contact sheet
+- 100% reliable fallback
 
+**Command:**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/crop-frames-ffmpeg.ts \
   --input outputs/contact-sheet.png \
   --output-dir outputs/frames/
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--input` | Yes | - | Contact sheet image path |
-| `--output-dir` | Yes | - | Output directory for frames |
-| `--cols` | No | 3 | Grid columns |
-| `--rows` | No | 2 | Grid rows |
-| `--padding` | No | 0 | Pixels to trim from each frame edge |
-
-**Why this works:** Divides the image mathematically (width÷3, height÷2) without gutter detection. 100% reliable for any contact sheet.
-
 ---
 
-## Script: resize-frames.ts (Optional)
+### Resize Frames
 
-Resize/crop frames to a target aspect ratio (LOCAL - no API). Use when user requests 16:9, 9:16, or other aspect ratios.
+**Purpose:** Change aspect ratio of all frames (e.g., for portrait/landscape/square formats).
 
+**When to use:**
+- User requests different aspect ratio: "make it portrait", "resize to 16:9", "square format"
+- Before video generation if user wants non-default ratio
+
+**Command:**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts \
   --input-dir outputs/frames/ \
@@ -134,38 +122,30 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/resize-frames.ts \
   --aspect-ratio 16:9
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
+**Parameters:**
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
 | `--input-dir` | Yes | - | Directory containing frame images |
 | `--output-dir` | No | input-dir | Output directory (overwrites if same) |
 | `--aspect-ratio` | Yes | - | Target ratio: 16:9, 9:16, 4:3, 3:4, 1:1, 3:2, 2:3 |
-| `--format` | No | png | Output format: png, jpeg, webp |
 
-**Common Aspect Ratios:**
+**Common aspect ratios:**
 - `16:9` - Landscape (YouTube, desktop)
 - `9:16` - Portrait (TikTok, Reels, Stories)
 - `1:1` - Square (Instagram)
 
-**Behavior:** Crops from center to maintain subject focus.
-
-**Errors:**
-- `Input directory not found` → Check frames directory exists
-- `No image files found` → Check frame-{1-6}.png exist
-
 ---
 
-## Script: generate-video.ts
+### Generate Video
 
-Generate videos via Kling AI direct API with frame-pair interpolation.
+**Purpose:** Create motion video clips between frame pairs using AI video generation.
 
-### Video Prompts
+**When to use:**
+- After frames are approved (all 6 extracted and any modifications complete)
+- Creates 5 videos from 6 frames (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6)
+- Optionally creates video-6 (frame-6→frame-1) for loop mode
 
-Use the fixed prompts from `.claude/skills/editorial-photography/prompts/video.md`
-
-Each transition has a specific camera movement prompt for the frame pair. Copy the prompt exactly.
-
-### Command (Frame-Pair Mode)
-
+**Command:**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --input outputs/frames/frame-1.png \
@@ -175,38 +155,42 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/generate-video.ts \
   --duration 5
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--input` | Yes | - | Start frame image |
-| `--input-tail` | No | - | End frame image (for frame-pair interpolation) |
-| `--prompt` | Yes | - | Transition prompt (from video.md) |
+**Parameters:**
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `--input` | Yes | - | Start frame image path |
+| `--input-tail` | No | - | End frame image path (for frame-pair interpolation) |
+| `--prompt` | Yes | - | Transition prompt from video.md |
 | `--output` | Yes | - | Output video path |
-| `--duration` | No | 5 | 5 or 10 seconds |
+| `--duration` | No | 5 | Duration in seconds (5 or 10) |
 
-### Frame-Pair Mapping
+**Frame-pair mapping:**
+| Clip | Start Frame | End Frame |
+|------|-------------|-----------|
+| video-1 | frame-1.png | frame-2.png |
+| video-2 | frame-2.png | frame-3.png |
+| video-3 | frame-3.png | frame-4.png |
+| video-4 | frame-4.png | frame-5.png |
+| video-5 | frame-5.png | frame-6.png |
+| video-6 | frame-6.png | frame-1.png | *(loop mode only)* |
 
-| Clip | Start Frame | End Frame | Command |
-|------|-------------|-----------|---------|
-| video-1 | frame-1.png | frame-2.png | `--input frame-1.png --input-tail frame-2.png` |
-| video-2 | frame-2.png | frame-3.png | `--input frame-2.png --input-tail frame-3.png` |
-| video-3 | frame-3.png | frame-4.png | `--input frame-3.png --input-tail frame-4.png` |
-| video-4 | frame-4.png | frame-5.png | `--input frame-4.png --input-tail frame-5.png` |
-| video-5 | frame-5.png | frame-6.png | `--input frame-5.png --input-tail frame-6.png` |
-| video-6 | frame-6.png | frame-1.png | `--input frame-6.png --input-tail frame-1.png` **(LOOP ONLY)** |
+**Note:** Each video takes 2-3 minutes to generate. Be patient.
 
-**Important:** When using `--input-tail` for frame-pair mode, `camera_control` JSON is not available. Describe camera movements in the text prompt instead.
-
-**Errors:**
-- `KLING_ACCESS_KEY and KLING_SECRET_KEY ... required` → Add both keys to .env file
-- `Timeout` → Kling takes 2-3 minutes per video, be patient
-- `Request failed` → Retry once, then report to user
+**Error handling:**
+- `KLING keys not set` → Add KLING_ACCESS_KEY and KLING_SECRET_KEY to .env
+- `Timeout` → Kling is slow, wait 2-3 min per video
 
 ---
 
-## Script: stitch-videos-eased.ts
+### Stitch Videos
 
-Stitch videos with speed curves for invisible hard cuts (LOCAL - no API).
+**Purpose:** Combine all video clips into the final fashion video with speed curves for smooth transitions.
 
+**When to use:**
+- After all 5 video clips (or 6 with loop) are generated
+- User has approved clips or requested specific speed/easing
+
+**Command (5 clips, no loop):**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --clips outputs/videos/video-1.mp4 \
@@ -219,21 +203,7 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --easing dramaticSwoop
 ```
 
-| Option | Required | Default | Description |
-|--------|----------|---------|-------------|
-| `--clips` | Yes | - | Input video files (multiple) |
-| `--output` | Yes | - | Output video path |
-| `--clip-duration` | No | 1.5 | Output duration per clip (seconds) |
-| `--easing` | No | easeInOutSine | Easing curve (dramaticSwoop, cinematic, etc.) |
-| `--output-fps` | No | 60 | Output frame rate |
-| `--keep-temp` | No | false | Keep temporary frames for debugging |
-
-**Recommended:** `--clip-duration 1.5 --easing dramaticSwoop`
-
-### With Loop (6 clips)
-
-If user enabled loop, include video-6 in the stitch:
-
+**Command (6 clips, with loop):**
 ```bash
 npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --clips outputs/videos/video-1.mp4 \
@@ -247,22 +217,16 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
   --easing dramaticSwoop
 ```
 
-**Errors:**
-- `ffmpeg not found` → Install with `brew install ffmpeg`
-- `Input file missing` → Check all videos exist (5 without loop, 6 with loop)
+**Parameters:**
+| Param | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `--clips` | Yes | - | Input video files (specify multiple times) |
+| `--output` | Yes | - | Final video output path |
+| `--clip-duration` | No | 1.5 | Output duration per clip in seconds |
+| `--easing` | No | easeInOutSine | Easing curve for speed ramping |
+| `--output-fps` | No | 60 | Output frame rate |
 
----
-
-## Error Recovery Summary
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| FAL_KEY not set | Missing image API key | Add FAL_KEY to .env file |
-| KLING keys not set | Missing video API keys | Add KLING_ACCESS_KEY and KLING_SECRET_KEY to .env |
-| Request failed | API error | Retry once |
-| Timeout | Kling slow | Wait 2-3 min per video |
-| File not found | Missing output | Check previous step completed |
-| ffmpeg not found | Not installed | `brew install ffmpeg` |
+**Recommended settings:** `--clip-duration 1.5 --easing dramaticSwoop`
 
 ---
 
@@ -270,22 +234,36 @@ npx tsx .claude/skills/fashion-shoot-pipeline/scripts/stitch-videos-eased.ts \
 
 ```
 outputs/
-├── hero.png                    # From generate-image (HERO)
-├── contact-sheet.png           # From generate-image (CONTACT)
+├── hero.png                    # Full-body hero shot
+├── contact-sheet.png           # 2×3 grid of 6 camera angles
 ├── frames/
-│   ├── frame-1.png            # From crop-frames
-│   ├── frame-2.png
-│   ├── frame-3.png
-│   ├── frame-4.png
-│   ├── frame-5.png
-│   └── frame-6.png
+│   ├── frame-1.png            # Beauty portrait
+│   ├── frame-2.png            # High-angle 3/4 view
+│   ├── frame-3.png            # Low-angle full body
+│   ├── frame-4.png            # Side-on profile
+│   ├── frame-5.png            # Intimate close-up
+│   └── frame-6.png            # Extreme detail
 ├── videos/
-│   ├── video-1.mp4            # From generate-video (frames 1→2)
-│   ├── video-2.mp4            # From generate-video (frames 2→3)
-│   ├── video-3.mp4            # From generate-video (frames 3→4)
-│   ├── video-4.mp4            # From generate-video (frames 4→5)
-│   ├── video-5.mp4            # From generate-video (frames 5→6)
-│   └── video-6.mp4            # OPTIONAL: Loop clip (frames 6→1)
+│   ├── video-1.mp4            # Frames 1→2 transition
+│   ├── video-2.mp4            # Frames 2→3 transition
+│   ├── video-3.mp4            # Frames 3→4 transition
+│   ├── video-4.mp4            # Frames 4→5 transition
+│   ├── video-5.mp4            # Frames 5→6 transition
+│   └── video-6.mp4            # Frames 6→1 (loop only)
 └── final/
-    └── fashion-video.mp4       # From stitch-videos (~20s, or ~24s with loop)
+    └── fashion-video.mp4       # Final stitched video (~9s or ~10.5s with loop)
 ```
+
+---
+
+## Error Recovery Summary
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| FAL_KEY not set | Missing image API key | Add FAL_KEY to .env |
+| KLING keys not set | Missing video API keys | Add KLING_ACCESS_KEY and KLING_SECRET_KEY |
+| Request failed | API error | Retry once |
+| Timeout | Kling slow | Wait 2-3 min per video |
+| File not found | Missing output | Check previous step completed |
+| Gutter detection failed | Contact sheet has minimal gutters | Use crop-frames-ffmpeg.ts fallback |
+| ffmpeg not found | Not installed | `brew install ffmpeg` |

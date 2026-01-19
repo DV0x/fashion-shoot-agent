@@ -19,12 +19,15 @@ export function ChatInput({
   uploadedImages,
   onRemoveImage,
   isGenerating,
-  placeholder = 'Describe your fashion shoot...',
+  placeholder = 'Describe your fashion shoot... (tip: start with /yolo for autonomous mode)',
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Detect if user is typing /yolo command
+  const isYoloMode = /^\/yolo\b/i.test(input.trim()) || /\byolo\b/i.test(input.toLowerCase());
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -150,9 +153,26 @@ export function ChatInput({
             placeholder={placeholder}
             rows={1}
             disabled={isGenerating}
-            className="w-full px-4 py-2.5 bg-surface border border-border/50 rounded-2xl text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all disabled:opacity-50 shadow-lg shadow-black/10"
+            className={`w-full px-4 py-2.5 bg-surface border rounded-2xl text-text-primary placeholder:text-text-muted resize-none focus:outline-none transition-all disabled:opacity-50 shadow-lg shadow-black/10 ${
+              isYoloMode
+                ? 'border-amber-500/70 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30'
+                : 'border-border/50 focus:border-accent/50 focus:ring-1 focus:ring-accent/20'
+            }`}
             style={{ minHeight: '44px', maxHeight: '150px' }}
           />
+          {/* YOLO mode indicator */}
+          <AnimatePresence>
+            {isYoloMode && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-amber-500 text-xs font-medium"
+              >
+                <span>YOLO</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Send button */}

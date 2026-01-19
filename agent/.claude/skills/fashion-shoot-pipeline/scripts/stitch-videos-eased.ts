@@ -37,10 +37,17 @@ import {
 import { calculateSourceTimestamps } from "./lib/timestamp-calc.js";
 
 /**
- * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ * Emit progress as JSON event to stdout
  */
 function emitProgress(message: string): void {
-  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+  console.log(JSON.stringify({ type: "progress", message }));
+}
+
+/**
+ * Emit artifact event when generation completes
+ */
+function emitArtifact(path: string, artifactType: "image" | "video" = "video"): void {
+  console.log(JSON.stringify({ type: "artifact", path, artifactType }));
 }
 
 // =============================================================================
@@ -338,7 +345,9 @@ async function main() {
   try {
     const options = parseArguments();
     const result = await stitchVideosEased(options);
-    console.log(JSON.stringify(result, null, 2));
+
+    // Emit artifact event for frontend
+    emitArtifact(result.output, "video");
   } catch (error) {
     console.error("Error:", error instanceof Error ? error.message : error);
     process.exit(1);

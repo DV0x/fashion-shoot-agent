@@ -16,10 +16,17 @@ import { existsSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 
 /**
- * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ * Emit progress as JSON event to stdout
  */
 function emitProgress(message: string): void {
-  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+  console.log(JSON.stringify({ type: "progress", message }));
+}
+
+/**
+ * Emit artifacts event for multiple files (e.g., frames)
+ */
+function emitArtifacts(paths: string[], artifactType: "image-grid" | "video-grid"): void {
+  console.log(JSON.stringify({ type: "artifacts", paths, artifactType }));
 }
 
 // Parse command line arguments
@@ -218,32 +225,14 @@ async function main() {
     }
   }
 
-  // Get final dimensions
-  const finalDims = getImageDimensions(framePaths[0]);
-
-  // Output JSON result
-  const result = {
-    success: true,
-    framesCount: totalFrames,
-    inputDimensions: { width, height },
-    frameDimensions: { width: finalDims.width, height: finalDims.height },
-    padding,
-    normalized: normalize,
-    frames: framePaths.map((p, i) => ({
-      frame: i + 1,
-      path: p,
-      position: {
-        col: i % cols,
-        row: Math.floor(i / cols),
-        x: (i % cols) * frameWidth,
-        y: Math.floor(i / cols) * frameHeight
-      }
-    }))
-  };
+  // Get final dimensions for logging
+  const { width: finalWidth, height: finalHeight } = getImageDimensions(framePaths[0]);
 
   emitProgress(`[FFmpeg] Successfully extracted ${totalFrames} frames`);
-  emitProgress(`[FFmpeg] Final dimensions: ${finalDims.width}x${finalDims.height}`);
-  console.log(JSON.stringify(result, null, 2));
+  emitProgress(`[FFmpeg] Final dimensions: ${finalWidth}x${finalHeight}`);
+
+  // Emit artifacts event for frontend
+  emitArtifacts(framePaths, "image-grid");
 }
 
 main().catch((error) => {

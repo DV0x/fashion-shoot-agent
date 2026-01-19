@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { ChatView } from './components/chat/ChatView';
 import { ChatInput } from './components/chat/ChatInput';
-import { useStreamingGenerate } from './hooks/useStreamingGenerate';
+import { useWebSocket } from './hooks/useWebSocket';
 
 function App() {
   const {
@@ -16,7 +16,7 @@ function App() {
     resetSession,
     handleUpload,
     removeUploadedImage,
-  } = useStreamingGenerate();
+  } = useWebSocket();
 
   // Handle continue with optional options (aspect ratio, speed, loop)
   const handleContinue = useCallback((options?: string) => {

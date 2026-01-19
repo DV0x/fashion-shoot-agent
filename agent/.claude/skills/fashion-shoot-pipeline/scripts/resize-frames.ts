@@ -25,10 +25,17 @@ import * as path from "path";
 import { parseArgs } from "util";
 
 /**
- * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ * Emit progress as JSON event to stdout
  */
 function emitProgress(message: string): void {
-  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+  console.log(JSON.stringify({ type: "progress", message }));
+}
+
+/**
+ * Emit artifacts event for multiple files (e.g., frames)
+ */
+function emitArtifacts(paths: string[], artifactType: "image-grid" | "video-grid"): void {
+  console.log(JSON.stringify({ type: "artifacts", paths, artifactType }));
 }
 
 // Supported aspect ratios
@@ -286,24 +293,9 @@ async function main() {
 
     emitProgress(`[Resize] Successfully resized ${results.length} frames to ${args.aspectRatio}`);
 
-    // Output JSON result to stdout (for pipeline integration)
-    console.log(
-      JSON.stringify(
-        {
-          success: true,
-          aspectRatio: args.aspectRatio,
-          framesCount: results.length,
-          frames: results.map((r) => ({
-            inputPath: r.inputPath,
-            outputPath: r.outputPath,
-            originalSize: `${r.originalWidth}x${r.originalHeight}`,
-            newSize: `${r.newWidth}x${r.newHeight}`,
-          })),
-        },
-        null,
-        2
-      )
-    );
+    // Emit artifacts event for frontend
+    const framePaths = results.map((r) => r.outputPath);
+    emitArtifacts(framePaths, "image-grid");
   } catch (error) {
     console.error("Error:", error instanceof Error ? error.message : error);
     process.exit(1);

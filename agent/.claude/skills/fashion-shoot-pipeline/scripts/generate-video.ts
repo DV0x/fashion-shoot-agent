@@ -30,10 +30,17 @@ import { createHmac } from "crypto";
 import * as path from "path";
 
 /**
- * Emit progress as SSE event to stdout (forwarded to client by generate.ts handler)
+ * Emit progress as JSON event to stdout
  */
 function emitProgress(message: string): void {
-  console.log(`data: ${JSON.stringify({ type: "script_status", message })}\n`);
+  console.log(JSON.stringify({ type: "progress", message }));
+}
+
+/**
+ * Emit artifact event when generation completes
+ */
+function emitArtifact(path: string, artifactType: "image" | "video" = "video"): void {
+  console.log(JSON.stringify({ type: "artifact", path, artifactType }));
 }
 
 // Types
@@ -377,8 +384,8 @@ async function main() {
       negativePrompt: args.negativePrompt,
     });
 
-    // Output result path to stdout (for pipeline integration)
-    console.log(outputPath);
+    // Emit artifact event for frontend
+    emitArtifact(outputPath, "video");
   } catch (error) {
     console.error("Error:", error instanceof Error ? error.message : error);
     process.exit(1);

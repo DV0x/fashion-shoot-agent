@@ -1,3 +1,5 @@
+
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { resolve } from 'path';
@@ -5,11 +7,9 @@ import { readFileSync, existsSync } from 'fs';
 import { EventEmitter } from 'events';
 import { SessionManager } from './session-manager.js';
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator-prompt.js';
-import { createCheckpointDetector, type CheckpointDetector } from './checkpoint-detector.js';
-import type { WorkflowConfig } from './prompt-generator.js';
 
-// Checkpoint data structure
-export interface CheckpointData {
+// Progress data structure (for pipeline tracking without forced stops)
+export interface ProgressData {
   stage: string;  // Dynamic stage names from workflow config
   status: 'complete' | 'error';
   artifact?: string;
@@ -19,224 +19,113 @@ export interface CheckpointData {
   isFinal?: boolean;
 }
 
-// Checkpoint event emitter for real-time notifications
-export const checkpointEmitter = new EventEmitter();
+// Legacy alias for backwards compatibility
+export type CheckpointData = ProgressData;
+
+// Event emitter for real-time progress notifications
+// Emits 'progress' events for pipeline tracking (no forced stops)
+export const progressEmitter = new EventEmitter();
+
+// Legacy alias for backwards compatibility
+export const checkpointEmitter = progressEmitter;
 
 /**
- * Legacy checkpoint detection based on hardcoded patterns
- * Kept for backwards compatibility when no workflow config is provided
- * @deprecated Use config-driven checkpoint detection via CheckpointDetector
+ * Parse script output for artifact events
+ * Scripts emit JSON events like:
+ * - {"type":"artifact","path":"outputs/hero.png","artifactType":"image"}
+ * - {"type":"artifacts","paths":["outputs/frames/frame-1.png",...],"artifactType":"image-grid"}
+ *
+ * Works with both direct Bash output and TaskOutput (background task) results
  */
-function detectCheckpointLegacy(toolName: string, toolInput: any, toolResponse: any): CheckpointData | null {
-  // Check Bash tool results AND TaskOutput results (for background tasks)
-  if (toolName !== 'Bash' && toolName !== 'TaskOutput') return null;
+function parseArtifactEvents(toolName: string, toolResponse: any): ProgressData[] {
+  console.log(`🔧 [TOOL] ${toolName} completed`);
 
-  const output = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
+  if (toolName !== 'Bash' && toolName !== 'TaskOutput') return [];
 
-  // For TaskOutput, we don't have the original command, so check output directly
-  // For Bash, we have the command in toolInput
-  const command = toolName === 'Bash' ? (toolInput?.command || '') : '';
-
-  // Common checks for TaskOutput (background task) handling
-  const isTaskOutput = toolName === 'TaskOutput';
-  const hasSuccessStatus = output.includes('retrieval_status>success') || output.includes('"success"');
-  const hasError = output.includes('Error');
-
-  // DEBUG: Log tool executions for checkpoint detection
-  console.log(`🔍 [CHECKPOINT DEBUG] Checking ${toolName}:`);
-  if (command) {
-    console.log(`   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}`);
-  }
-  console.log(`   Output preview: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
-
-  // Detect hero.png creation (from generate-image.ts)
-  if (command.includes('generate-image.ts') && output.includes('outputs/hero.png')) {
-    return {
-      stage: 'hero',
-      status: 'complete',
-      artifact: 'outputs/hero.png',
-      message: 'Hero image ready. Reply "continue" or describe changes.'
-    };
+  // Get output string from response
+  let output: string;
+  if (typeof toolResponse === 'string') {
+    output = toolResponse;
+  } else if (toolResponse?.stdout) {
+    output = toolResponse.stdout;
+  } else {
+    output = JSON.stringify(toolResponse);
   }
 
-  // Detect individual frame regeneration (from generate-image.ts to outputs/frames/)
-  // This triggers when user requests modifications to specific frames
-  if (command.includes('generate-image.ts') && output.includes('outputs/frames/frame-')) {
-    // Extract which frame(s) were regenerated from the output
-    const frameMatches = output.match(/outputs\/frames\/frame-(\d+)\.png/g);
-    const regeneratedFrames = frameMatches
-      ? [...new Set(frameMatches)].sort()  // Dedupe and sort
-      : [];
-
-    const frameNumbers = regeneratedFrames.map(f => f.match(/frame-(\d+)/)?.[1]).filter(Boolean);
-    const frameList = frameNumbers.length > 1
-      ? `Frames ${frameNumbers.join(', ')} regenerated.`
-      : `Frame ${frameNumbers[0]} regenerated.`;
-
-    return {
-      stage: 'frames',
-      status: 'complete',
-      artifacts: [
-        'outputs/frames/frame-1.png',
-        'outputs/frames/frame-2.png',
-        'outputs/frames/frame-3.png',
-        'outputs/frames/frame-4.png',
-        'outputs/frames/frame-5.png',
-        'outputs/frames/frame-6.png'
-      ],
-      message: `${frameList} Reply "continue" or request more changes.`
-    };
+  // Unescape if TaskOutput returned escaped JSON (has \" instead of ")
+  if (output.includes('\\"')) {
+    output = output.replace(/\\"/g, '"').replace(/\\n/g, '\n');
   }
 
-  // Detect frames creation (from crop-frames.ts)
-  if (command.includes('crop-frames.ts') && output.includes('frame-6.png')) {
-    return {
-      stage: 'frames',
-      status: 'complete',
-      artifacts: [
-        'outputs/frames/frame-1.png',
-        'outputs/frames/frame-2.png',
-        'outputs/frames/frame-3.png',
-        'outputs/frames/frame-4.png',
-        'outputs/frames/frame-5.png',
-        'outputs/frames/frame-6.png'
-      ],
-      message: '6 frames ready. Reply "continue" or request modifications.'
-    };
+  console.log(`📝 [OUTPUT] ...${output.substring(Math.max(0, output.length - 500))}`);
+
+  const events: ProgressData[] = [];
+
+  // Parse each line looking for artifact JSON
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+
+    try {
+      const parsed = JSON.parse(trimmed);
+
+      if (parsed.type === 'artifact' && parsed.path) {
+        console.log(`🎨 [ARTIFACT] Found: ${parsed.path} (${parsed.artifactType})`);
+        events.push({
+          stage: parsed.artifactType || 'unknown',
+          status: 'complete',
+          artifact: parsed.path,
+          type: parsed.artifactType,
+          message: `${parsed.artifactType || 'Artifact'} ready: ${parsed.path}`,
+          isFinal: parsed.artifactType === 'video' && parsed.path.includes('final/')
+        });
+      } else if (parsed.type === 'artifacts' && parsed.paths?.length) {
+        console.log(`🎨 [ARTIFACTS] Found: ${parsed.paths.length} files (${parsed.artifactType})`);
+        events.push({
+          stage: parsed.artifactType || 'unknown',
+          status: 'complete',
+          artifacts: parsed.paths,
+          type: parsed.artifactType,
+          message: `${parsed.paths.length} ${parsed.artifactType || 'files'} ready`
+        });
+      }
+    } catch {
+      // Not valid JSON, skip
+    }
   }
 
-  // Detect frames resize (from resize-frames.ts)
-  // Note: Check for 'success' patterns that work with both raw and JSON-stringified output
-  // The output could be: "success": true OR \"success\": true OR success":true
-  const hasResizeSuccess = /success["\\]*:\s*true/.test(output) || output.includes('framesCount');
-  if (command.includes('resize-frames.ts') && hasResizeSuccess && !hasError) {
-    // Extract aspect ratio from command if possible
-    const aspectMatch = command.match(/--aspect-ratio\s+(\S+)/);
-    const aspectRatio = aspectMatch ? aspectMatch[1] : 'new aspect ratio';
-
-    return {
-      stage: 'frames',
-      status: 'complete',
-      artifacts: [
-        'outputs/frames/frame-1.png',
-        'outputs/frames/frame-2.png',
-        'outputs/frames/frame-3.png',
-        'outputs/frames/frame-4.png',
-        'outputs/frames/frame-5.png',
-        'outputs/frames/frame-6.png'
-      ],
-      message: `Frames resized to ${aspectRatio}. Reply "continue" to generate videos or request changes.`
-    };
-  }
-
-  // Detect final video creation (from stitch-videos-eased.ts OR raw ffmpeg OR TaskOutput from background task)
-  // IMPORTANT: Check this BEFORE clips to prevent stitch output (which contains video-*.mp4 inputs)
-  // from triggering clips checkpoint instead of complete
-  const hasStitchScript = command.includes('stitch-videos-eased.ts');
-  const hasFashionVideoInOutput = output.includes('fashion-video.mp4');
-  const hasFFmpeg = command.includes('ffmpeg');
-  const hasFashionVideoInCommand = command.includes('outputs/final/fashion-video.mp4');
-
-  const isFinalVideoCreated =
-    (hasStitchScript && hasFashionVideoInOutput) ||
-    (hasFFmpeg && hasFashionVideoInCommand && !hasError) ||
-    (isTaskOutput && hasFashionVideoInOutput && hasSuccessStatus && !hasError);
-
-  if (isFinalVideoCreated) {
-    console.log(`✅ [CHECKPOINT DEBUG] COMPLETE checkpoint detected!`);
-    return {
-      stage: 'complete',
-      status: 'complete',
-      artifact: 'outputs/final/fashion-video.mp4',
-      message: 'Fashion video complete!'
-    };
-  }
-
-  // Detect clips creation or regeneration (from generate-video.ts)
-  // Triggers on:
-  // 1. Initial generation: video-5.mp4 (last of 5 sequential frame-pair clips)
-  // 2. Clip regeneration: any single video-N.mp4 output
-  // Also check TaskOutput in case video generation runs as background task (>2min timeout)
-  // Note: 5 videos from 6 frames (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6)
-  const hasVideo5 = output.includes('video-5.mp4');
-  const hasAnyVideo = /video-[1-5]\.mp4/.test(output);
-
-  // Check if this is a single clip regeneration (only one video mentioned)
-  const videoMatches = output.match(/video-[1-5]\.mp4/g);
-  const isSingleClipRegen = videoMatches && videoMatches.length === 1;
-
-  const isClipsCreated =
-    (command.includes('generate-video.ts') && (hasVideo5 || isSingleClipRegen)) ||
-    (isTaskOutput && hasAnyVideo && hasSuccessStatus && !hasError);
-
-  if (isClipsCreated) {
-    const regenClip = isSingleClipRegen ? videoMatches[0].match(/video-(\d)/)?.[1] : null;
-    const framePairLabels = ['1→2', '2→3', '3→4', '4→5', '5→6'];
-    const message = regenClip
-      ? `Clip ${regenClip} (frames ${framePairLabels[parseInt(regenClip) - 1]}) regenerated. Choose speed or regenerate more clips.`
-      : `5 clips ready (frame pairs):
-- Clip 1: frames 1→2
-- Clip 2: frames 2→3
-- Clip 3: frames 3→4
-- Clip 4: frames 4→5
-- Clip 5: frames 5→6
-
-Choose speed (1x, 1.25x, 1.5x, 2x), or regenerate any clip.`;
-
-    return {
-      stage: 'clips',
-      status: 'complete',
-      artifacts: [
-        'outputs/videos/video-1.mp4',
-        'outputs/videos/video-2.mp4',
-        'outputs/videos/video-3.mp4',
-        'outputs/videos/video-4.mp4',
-        'outputs/videos/video-5.mp4'
-      ],
-      message
-    };
-  }
-
-  return null;
+  return events;
 }
 
 /**
- * Create PostToolUse hooks for checkpoint detection
- * @param sessionId - The session ID for emitting checkpoint events
- * @param detector - Optional config-driven checkpoint detector (uses legacy detection if not provided)
+ * Create PostToolUse hooks for artifact detection
+ * Parses script stdout for artifact events and emits progress
+ * The agent decides when to pause naturally via its responses
+ * @param sessionId - The session ID for emitting progress events
  */
-function createCheckpointHooks(sessionId: string, detector?: CheckpointDetector | null) {
+function createProgressHooks(sessionId: string) {
   return {
     PostToolUse: [{
       hooks: [async (input: any, _toolUseId: string | undefined, _options: { signal: AbortSignal }) => {
-        let checkpoint: CheckpointData | null = null;
+        // Parse script output for artifact events
+        const artifactEvents = parseArtifactEvents(
+          input.tool_name,
+          input.tool_response
+        );
 
-        if (detector) {
-          // Use config-driven detection
-          checkpoint = detector.detect(
-            input.tool_name,
-            input.tool_input,
-            input.tool_response
-          );
-        } else {
-          // Fallback to legacy detection (for backwards compatibility)
-          checkpoint = detectCheckpointLegacy(
-            input.tool_name,
-            input.tool_input,
-            input.tool_response
-          );
+        // Emit each artifact as a progress event
+        for (const progress of artifactEvents) {
+          console.log(`📊 PROGRESS: ${progress.stage} - ${progress.message}`);
+          progressEmitter.emit('progress', { sessionId, progress });
         }
 
-        if (checkpoint) {
-          console.log(`⏸️  CHECKPOINT DETECTED: ${checkpoint.stage} - ${checkpoint.message}`);
-          checkpointEmitter.emit('checkpoint', { sessionId, checkpoint });
-        }
-
+        // Always continue - agent decides when to pause via its response
         return { continue: true };
       }]
     }]
   };
 }
+
 
 // Image content block for multimodal input
 interface ImageContentBlock {
@@ -299,6 +188,7 @@ function loadImageAsBase64(imagePath: string): ImageContentBlock | null {
 export class AIClient {
   private defaultOptions: Partial<Options>;
   private sessionManager: SessionManager;
+  private activeGenerations: Map<string, AbortController> = new Map(); // sessionId -> AbortController
 
   constructor(sessionManager?: SessionManager) {
     // Ensure cwd points to agent directory where .claude/ is located
@@ -310,14 +200,23 @@ export class AIClient {
       cwd: projectRoot,
       model: 'claude-sonnet-4-20250514',
       maxTurns: 100,  // Full pipeline needs ~50-80 turns (hero + contact + 6 frames + 6 videos + stitch)
-      settingSources: ['user', 'project'],
+      settingSources: ['project'],  // Use project settings only (not user settings)
+      permissionMode: 'default',    // Don't block on permission prompts in headless server
+      canUseTool: async (_toolName: string, input: Record<string, unknown>) => ({
+        behavior: 'allow' as const,
+        updatedInput: input
+      }),
       allowedTools: [
         "Read",
         "Write",
+        "Edit",       // Added: file editing
         "Glob",
+        "Grep",       // Added: content search
         "Bash",
         "Task",
-        "Skill"
+        "Skill",
+        "TodoWrite",  // Added: task tracking
+        "WebFetch"    // Added: web content fetching
       ],
       systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT
     };
@@ -375,42 +274,45 @@ export class AIClient {
    * Supports multimodal input (text + images)
    * @param prompt - The user prompt
    * @param sessionId - Optional session ID
-   * @param metadata - Optional metadata including systemPrompt and workflowConfig
+   * @param metadata - Optional metadata including systemPrompt and autonomousMode
    * @param imagePaths - Optional image paths for multimodal input
    */
   async *queryWithSession(
     prompt: string,
     sessionId?: string,
-    metadata?: { systemPrompt?: string; workflowConfig?: WorkflowConfig },
+    metadata?: { systemPrompt?: string; autonomousMode?: boolean },
     imagePaths?: string[]
   ) {
     const session = await this.sessionManager.getOrCreateSession(sessionId);
     const resumeOptions = this.sessionManager.getResumeOptions(session.id);
     const abortController = new AbortController();
 
-    // Create checkpoint detector from workflow config if provided
-    const detector = metadata?.workflowConfig
-      ? createCheckpointDetector(metadata.workflowConfig)
-      : null;
+    // Store AbortController for potential cancellation
+    this.activeGenerations.set(session.id, abortController);
 
-    // Use provided system prompt or fall back to default
-    const systemPrompt = metadata?.systemPrompt || this.defaultOptions.systemPrompt;
+    // Check if autonomous mode is enabled (from metadata or session)
+    const isAutonomous = metadata?.autonomousMode || this.sessionManager.isAutonomousMode(session.id);
+
+    // Build system prompt with optional autonomous mode injection
+    let systemPrompt = metadata?.systemPrompt || this.defaultOptions.systemPrompt;
+    if (isAutonomous && systemPrompt) {
+      systemPrompt = `${systemPrompt}\n\n## AUTONOMOUS MODE ACTIVE\nThe user has requested autonomous execution. Run the entire pipeline to completion without pausing for feedback. Make sensible creative decisions on their behalf. Only stop for errors or when the final video is complete.`;
+    }
 
     const queryOptions = {
       ...this.defaultOptions,
       ...resumeOptions,
-      systemPrompt,  // Use dynamic or default system prompt
+      systemPrompt,  // Use dynamic or default system prompt (with autonomous injection if enabled)
       includePartialMessages: true,  // Enable real-time token streaming
       abortController,
-      hooks: createCheckpointHooks(session.id, detector)
+      hooks: createProgressHooks(session.id)
     };
 
     console.log(`🔄 Query with session ${session.id}`, {
       hasResume: !!resumeOptions.resume,
       turnCount: session.turnCount,
       imageCount: imagePaths?.length || 0,
-      hasWorkflowConfig: !!metadata?.workflowConfig,
-      workflowId: metadata?.workflowConfig?.id || 'default'
+      autonomousMode: isAutonomous
     });
 
     try {
@@ -428,14 +330,51 @@ export class AIClient {
         // Abort the generator after receiving the result message
         // This allows the for-await loop to complete
         if (message.type === 'result') {
+          this.activeGenerations.delete(session.id);
           abortController.abort();
           break;
         }
       }
     } catch (error) {
+      this.activeGenerations.delete(session.id);
       abortController.abort();
       throw error;
+    } finally {
+      // Ensure cleanup even if iterator is broken
+      this.activeGenerations.delete(session.id);
     }
+  }
+
+  /**
+   * Cancel an active generation for a session
+   * @param sessionId - The session ID to cancel
+   * @returns true if generation was cancelled, false if no active generation
+   */
+  cancelGeneration(sessionId: string): boolean {
+    const abortController = this.activeGenerations.get(sessionId);
+    if (abortController) {
+      console.log(`🛑 Cancelling generation for session: ${sessionId}`);
+      abortController.abort();
+      this.activeGenerations.delete(sessionId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if a session has an active generation
+   * @param sessionId - The session ID to check
+   * @returns true if generation is active
+   */
+  isGenerating(sessionId: string): boolean {
+    return this.activeGenerations.has(sessionId);
+  }
+
+  /**
+   * Get all active generation session IDs
+   */
+  getActiveGenerations(): string[] {
+    return Array.from(this.activeGenerations.keys());
   }
 
   /**
