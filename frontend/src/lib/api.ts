@@ -1,6 +1,4 @@
 import type {
-  GenerateRequest,
-  GenerateResponse,
   SessionStats,
   PipelineState,
   UploadResponse,
@@ -63,29 +61,6 @@ export async function getSessionPipeline(sessionId: string): Promise<{
   return handleResponse(response);
 }
 
-// Generate
-export async function generate(request: GenerateRequest): Promise<GenerateResponse> {
-  const response = await fetch(`${API_BASE}/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  return handleResponse(response);
-}
-
-// Continue session
-export async function continueSession(
-  sessionId: string,
-  prompt: string
-): Promise<GenerateResponse> {
-  const response = await fetch(`${API_BASE}/sessions/${sessionId}/continue`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
-  });
-  return handleResponse(response);
-}
-
 // Cancel active generation
 export async function cancelGeneration(
   sessionId: string
@@ -107,32 +82,6 @@ export async function uploadImages(files: File[]): Promise<UploadResponse> {
     body: formData,
   });
   return handleResponse(response);
-}
-
-// SSE Stream for real-time updates
-export function createSessionStream(
-  sessionId: string,
-  onMessage: (event: { type: string; data?: unknown }) => void,
-  onError?: (error: Error) => void
-): () => void {
-  const eventSource = new EventSource(`${API_BASE}/sessions/${sessionId}/stream`);
-
-  eventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      onMessage(data);
-    } catch {
-      onMessage({ type: 'raw', data: event.data });
-    }
-  };
-
-  eventSource.onerror = () => {
-    onError?.(new Error('SSE connection error'));
-    eventSource.close();
-  };
-
-  // Return cleanup function
-  return () => eventSource.close();
 }
 
 export { ApiError };
