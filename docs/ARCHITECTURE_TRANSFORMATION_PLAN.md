@@ -19,6 +19,7 @@ Transform the fashion-shoot-agent from a **rigid workflow executor** into a **fl
 | Phase 6 Testing | ✅ COMPLETE | Connection verified stable |
 | Phase 7: Chat UX Streaming | ✅ COMPLETE | Block-level streaming, real-time text, progress events |
 | Phase 8: WebSocket Streaming Fixes | ✅ COMPLETE | Phase 7 events for WS, StrictMode fix, artifact detection |
+| Phase 9: Protocol & UI Simplification | ✅ COMPLETE | WebSocket-only, removed checkpoint UI, simplified frontend |
 
 ---
 
@@ -236,15 +237,15 @@ Full bidirectional WebSocket communication with mid-generation cancellation.
 | `server/lib/orchestrator-prompt.ts` | Complete rewrite - goal-first Creative Director |
 | `server/lib/session-manager.ts` | Added autonomousMode to metadata, setAutonomousMode(), isAutonomousMode() |
 | `server/lib/websocket-handler.ts` | Phase 7 message types (block_start/delta/end, message_start/stop), block event fields |
-| `server/sdk-server.ts` | /yolo detection, progress events, autonomousMode handling, HTTP server, WebSocket integration, cancel endpoint, Phase 7 block events for WebSocket handlers |
+| `server/sdk-server.ts` | /yolo detection, progress events, autonomousMode handling, HTTP server, WebSocket integration, cancel endpoint, Phase 7 block events, **Phase 9: removed SSE/REST streaming endpoints** |
 | `frontend/src/main.tsx` | Removed StrictMode (fixes WebSocket connection instability) |
 | `frontend/src/components/chat/ChatInput.tsx` | YOLO visual indicator, updated placeholder |
-| `frontend/src/hooks/useStreamingGenerate.ts` | Block handling, real-time streaming, progress events, removed duplicate accumulation, cancelGeneration() |
-| `frontend/src/hooks/useWebSocket.ts` | Block handling, real-time streaming, progress events, auto-reconnect, cancellation |
-| `frontend/src/lib/api.ts` | Added cancelGeneration() API function |
-| `frontend/src/lib/types.ts` | Added ContentBlock interface with tool fields |
+| `frontend/src/hooks/useWebSocket.ts` | Block handling, real-time streaming, progress events, auto-reconnect, cancellation, **Phase 9: sole communication hook** |
+| `frontend/src/lib/api.ts` | Added cancelGeneration() API function, **Phase 9: removed generate(), continueSession()** |
+| `frontend/src/lib/types.ts` | Added ContentBlock interface with tool fields, **Phase 9: removed CheckpointMessage type** |
 | `frontend/src/components/chat/ThinkingMessage.tsx` | Renders blocks with tool badges, collapsible |
-| `frontend/src/components/chat/ChatView.tsx` | Renders currentBlocks during streaming |
+| `frontend/src/components/chat/ChatView.tsx` | Renders currentBlocks during streaming, **Phase 9: removed onContinue prop** |
+| `frontend/src/App.tsx` | **Phase 9: simplified to single useWebSocket hook, removed onContinue callback** |
 | `agent/.claude/skills/fashion-shoot-pipeline/SKILL.md` | Enhanced with Purpose/When to use sections |
 
 ## Files Created (Phase 6 & 7)
@@ -254,6 +255,16 @@ Full bidirectional WebSocket communication with mid-generation cancellation.
 | `server/lib/websocket-handler.ts` | WebSocket server with message routing, heartbeat, session subscriptions |
 | `frontend/src/hooks/useWebSocket.ts` | WebSocket client hook with auto-reconnect, cancellation support |
 | `frontend/src/components/chat/ToolCallBlock.tsx` | Tool execution visualization with spinner, duration, expandable input |
+
+## Files Deleted (Phase 9)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `frontend/src/hooks/useSession.ts` | 239 | Session management (superseded by useWebSocket) |
+| `frontend/src/hooks/useStreamingGenerate.ts` | 1120 | SSE streaming (superseded by useWebSocket) |
+| `frontend/src/components/chat/CheckpointMessage.tsx` | 180 | Checkpoint UI (replaced by natural agent pauses) |
+| `server/lib/checkpoint-detector.ts` | 140 | Checkpoint detection (no longer needed) |
+| `server/lib/prompt-generator.ts` | 282 | Dynamic prompt generation (using static orchestrator prompt) |
 
 ---
 
@@ -632,6 +643,288 @@ And frontend should:
 - Maintain stable WebSocket connection (no rapid connect/disconnect)
 - Display streaming text in real-time
 - Show artifact images when generated
+
+---
+
+## Phase 9: Protocol & UI Simplification ✅ COMPLETE
+
+### Implementation Summary
+
+Simplified the architecture by removing SSE/REST streaming (WebSocket-only) and eliminating checkpoint UI in favor of natural agent pauses.
+
+### 9.1 WebSocket-Only Protocol
+
+**Commit:** `02ec9f1`
+
+**Problem:** Maintaining dual protocols (SSE + WebSocket) created complexity and code duplication.
+
+**Solution:** Removed all SSE and non-streaming REST endpoints. WebSocket is now the only method for generation.
+
+#### Removed Endpoints
+
+```typescript
+// SSE streaming (REMOVED)
+GET  /sessions/:id/stream     // SSE subscription
+POST /generate-stream          // SSE generation
+POST /sessions/:id/continue-stream  // SSE continue
+
+// Non-streaming REST (REMOVED)
+POST /generate                 // Sync generation
+POST /sessions/:id/continue    // Sync continue
+
+// Test endpoints (REMOVED)
+GET  /test/clips-checkpoint    // Test checkpoint
+GET  /test/video-complete      // Test completion
+```
+
+#### Remaining REST Endpoints
+
+```typescript
+GET  /health                   // Health check
+POST /upload                   // Upload images
+GET  /sessions                 // List sessions
+GET  /sessions/:id             // Session info
+GET  /sessions/:id/pipeline    // Pipeline status
+GET  /sessions/:id/assets      // Get assets
+POST /sessions/:id/cancel      // Cancel generation
+```
+
+#### WebSocket Protocol (Sole Communication Method)
+
+**Client → Server:**
+```typescript
+{ type: 'chat', content: string, images?: string[] }
+{ type: 'continue', sessionId: string, content?: string }
+{ type: 'cancel', sessionId: string }
+{ type: 'subscribe', sessionId: string }
+{ type: 'yolo', sessionId: string }
+{ type: 'ping' }
+```
+
+**Server → Client:**
+```typescript
+// Phase 7 block-level streaming
+{ type: 'message_start' }
+{ type: 'block_start', blockIndex, blockType, toolName?, toolId? }
+{ type: 'block_delta', blockIndex, text?, inputJsonDelta? }
+{ type: 'block_end', blockIndex, toolInput?, toolDuration? }
+{ type: 'message_stop' }
+
+// Session lifecycle
+{ type: 'connected', sessionId, timestamp }
+{ type: 'session_init', sessionId }
+{ type: 'progress', sessionId, progress, awaitingInput }
+{ type: 'complete', sessionId, response, sessionStats, pipeline }
+{ type: 'cancelled', sessionId }
+{ type: 'error', error }
+```
+
+### 9.2 Checkpoint UI Removal
+
+**Commit:** `b1de682`
+
+**Problem:** Forced checkpoints with "Continue" buttons interrupted the natural flow of conversation and didn't match the goal-first Creative Director approach.
+
+**Solution:** Removed checkpoint UI entirely. Agent pauses naturally via its responses (conversational), and artifacts are still displayed when detected.
+
+#### Removed Components
+
+- `frontend/src/components/chat/CheckpointMessage.tsx` - Yellow checkpoint box with Continue button
+
+#### Changes to Types
+
+```typescript
+// Removed from types.ts
+interface CheckpointMessage {
+  id: string;
+  role: 'system';
+  type: 'checkpoint';
+  checkpoint: Checkpoint;
+  timestamp: Date;
+}
+```
+
+#### Behavior Change
+
+**Before:** Agent outputs `---CHECKPOINT---` → Server detects → Frontend shows yellow box with "Continue" button → User clicks → Agent continues
+
+**After:** Agent naturally asks questions like "What do you think of this hero image?" → User responds → Agent continues. Artifacts (images/videos) still displayed inline without the checkpoint UI.
+
+### 9.3 Frontend Simplification
+
+**Files Deleted:**
+- `frontend/src/hooks/useSession.ts` - Session management hook (239 lines)
+- `frontend/src/hooks/useStreamingGenerate.ts` - SSE streaming hook (1120 lines)
+- `frontend/src/components/chat/CheckpointMessage.tsx` - Checkpoint UI (180 lines)
+
+**Single Hook Architecture:**
+
+Now only `useWebSocket.ts` handles all communication:
+
+```typescript
+// App.tsx - Drastically simplified
+function App() {
+  const {
+    messages,
+    isGenerating,
+    activity,
+    uploadedImages,
+    sendMessage,
+    resetSession,
+    handleUpload,
+    removeUploadedImage,
+  } = useWebSocket();
+
+  return (
+    <AppShell onReset={messages.length > 0 ? resetSession : undefined}>
+      <ChatView
+        messages={messages}
+        isGenerating={isGenerating}
+        activity={activity}
+      />
+      <ChatInput
+        onSend={sendMessage}
+        onUpload={handleUpload}
+        uploadedImages={uploadedImages}
+        onRemoveImage={removeUploadedImage}
+        isGenerating={isGenerating}
+        placeholder="Describe your fashion shoot..."
+      />
+    </AppShell>
+  );
+}
+```
+
+**Removed Props:**
+- `onContinue` - No longer needed without checkpoint UI
+- `checkpoint` - Not passed to ChatView
+- `awaitingInput` - Not tracked in UI state
+
+### 9.4 Server Simplification
+
+**Files Deleted:**
+- `server/lib/checkpoint-detector.ts` - Checkpoint detection logic (140 lines)
+- `server/lib/prompt-generator.ts` - Dynamic prompt generation (282 lines)
+
+**sdk-server.ts Reduction:**
+
+- Before: ~1000+ lines with SSE, REST streaming, checkpoint detection
+- After: 658 lines with WebSocket-only communication
+
+**Architecture:**
+```
+server/
+├── sdk-server.ts          # Express + WebSocket handlers (658 lines)
+└── lib/
+    ├── ai-client.ts       # Claude SDK integration
+    ├── orchestrator-prompt.ts  # Static system prompt
+    ├── session-manager.ts # Session state
+    ├── websocket-handler.ts  # WebSocket server
+    └── instrumentor.ts    # Metrics collection
+```
+
+### 9.5 API Module Cleanup
+
+**frontend/src/lib/api.ts:**
+
+Removed functions:
+```typescript
+// Removed - now handled by WebSocket
+export async function generate(...)
+export async function continueSession(...)
+```
+
+Remaining functions:
+```typescript
+export async function checkHealth()
+export async function listSessions()
+export async function getSession(sessionId)
+export async function getSessionPipeline(sessionId)
+export async function cancelGeneration(sessionId)
+export async function uploadImages(files)
+```
+
+### Files Modified (Phase 9)
+
+| File | Changes |
+|------|---------|
+| `server/sdk-server.ts` | Removed SSE endpoints, test endpoints, non-streaming REST |
+| `frontend/src/App.tsx` | Removed onContinue callback, checkpoint state |
+| `frontend/src/hooks/useWebSocket.ts` | Removed checkpoint message creation, only show artifact images |
+| `frontend/src/components/chat/ChatView.tsx` | Removed onContinue prop |
+| `frontend/src/lib/api.ts` | Removed generate(), continueSession() |
+| `frontend/src/lib/types.ts` | Removed CheckpointMessage type |
+
+### Files Deleted (Phase 9)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `frontend/src/hooks/useSession.ts` | 239 | Session management (superseded by useWebSocket) |
+| `frontend/src/hooks/useStreamingGenerate.ts` | 1120 | SSE streaming (superseded by useWebSocket) |
+| `frontend/src/components/chat/CheckpointMessage.tsx` | 180 | Checkpoint UI (removed) |
+| `server/lib/checkpoint-detector.ts` | 140 | Checkpoint detection (removed) |
+| `server/lib/prompt-generator.ts` | 282 | Dynamic prompts (using static prompt) |
+
+**Total Lines Removed:** ~1961 lines
+
+### Data Flow (Final Architecture)
+
+```
+User Input                    WebSocket                      Server
+=========                    =========                      ======
+
+[Type message] ─────────────────────────────────────────────────────►
+               { type: 'chat', content: '...' }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'session_init', sessionId }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'message_start' }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'block_start', blockIndex: 0, blockType: 'text' }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'block_delta', blockIndex: 0, text: 'I...' }
+               { type: 'block_delta', blockIndex: 0, text: ' will...' }
+               { type: 'block_delta', blockIndex: 0, text: ' create...' }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'block_end', blockIndex: 0 }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'block_start', blockIndex: 1, blockType: 'tool_use', toolName: 'Bash' }
+               { type: 'block_delta', blockIndex: 1, inputJsonDelta: '{"command":...' }
+               { type: 'block_end', blockIndex: 1, toolInput: {...}, toolDuration: 5234 }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'progress', progress: { stage: 'image', artifact: 'hero.png' } }
+
+[Image displayed in chat]
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'message_stop' }
+
+◄─────────────────────────────────────────────────────────────────────
+               { type: 'complete', sessionId, response, sessionStats }
+
+[Agent asks: "What do you think?"]
+
+[User types response] ──────────────────────────────────────────────►
+               { type: 'continue', sessionId, content: 'Looks great!' }
+
+... (cycle continues naturally)
+```
+
+### Benefits of Simplification
+
+1. **Single Protocol** - WebSocket handles all real-time communication
+2. **Natural Conversations** - Agent pauses via questions, not forced checkpoints
+3. **Fewer Files** - ~1961 lines of code removed
+4. **Clearer Data Flow** - One hook, one protocol, one message format
+5. **Better UX** - No jarring "Continue" buttons, smoother conversation
+6. **Easier Maintenance** - Less code paths to test and debug
 
 ---
 
