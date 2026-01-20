@@ -4,7 +4,6 @@ import type {
   TextMessage,
   ThinkingMessage,
   ImageMessage,
-  CheckpointMessage,
   VideoMessage,
   SessionStats,
   PipelineState,
@@ -101,9 +100,8 @@ function getActivityLabel(toolName: string): string {
 type AddTextMessage = { role: MessageRole; type: 'text'; content: string; isStreaming?: boolean };
 type AddThinkingMessage = { role: MessageRole; type: 'thinking'; content: string };
 type AddImageMessage = { role: MessageRole; type: 'image'; src: string; caption?: string };
-type AddCheckpointMessage = { role: MessageRole; type: 'checkpoint'; checkpoint: Checkpoint };
 type AddVideoMessage = { role: MessageRole; type: 'video'; src: string; poster?: string };
-type AddMessageInput = AddTextMessage | AddThinkingMessage | AddImageMessage | AddCheckpointMessage | AddVideoMessage;
+type AddMessageInput = AddTextMessage | AddThinkingMessage | AddImageMessage | AddVideoMessage;
 
 /**
  * useWebSocket - WebSocket-based hook for real-time bidirectional communication
@@ -156,9 +154,6 @@ export function useWebSocket() {
         break;
       case 'image':
         fullMessage = { ...message, id, timestamp } as ImageMessage;
-        break;
-      case 'checkpoint':
-        fullMessage = { ...message, id, timestamp } as CheckpointMessage;
         break;
       case 'video':
         fullMessage = { ...message, id, timestamp } as VideoMessage;
@@ -579,29 +574,19 @@ export function useWebSocket() {
         }
 
         case 'progress': {
-          // Progress event from PostToolUse hooks (Phase 3 architecture)
+          // Progress event from PostToolUse hooks - show artifacts only
           const progress = data.progress as Checkpoint;
           if (progress && (progress.artifact || progress.artifacts?.length)) {
             addArtifactMessages(progress);
-            addMessage({
-              role: 'system',
-              type: 'checkpoint',
-              checkpoint: progress,
-            });
           }
           break;
         }
 
         case 'checkpoint': {
-          // Legacy checkpoint event (fallback)
+          // Legacy checkpoint event - show artifacts only
           const checkpoint = data.checkpoint as Checkpoint;
           if (checkpoint) {
             addArtifactMessages(checkpoint);
-            addMessage({
-              role: 'system',
-              type: 'checkpoint',
-              checkpoint,
-            });
           }
           break;
         }

@@ -132,11 +132,6 @@ export interface ImageMessage extends BaseMessage {
   caption?: string;
 }
 
-export interface CheckpointMessage extends BaseMessage {
-  type: 'checkpoint';
-  checkpoint: Checkpoint;
-}
-
 export interface ProgressMessage extends BaseMessage {
   type: 'progress';
   stage: string;
@@ -156,7 +151,6 @@ export type ChatMessage =
   | TextMessage
   | ThinkingMessage
   | ImageMessage
-  | CheckpointMessage
   | ProgressMessage
   | VideoMessage;
 

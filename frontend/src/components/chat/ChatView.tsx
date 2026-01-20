@@ -6,7 +6,6 @@ import { ThinkingMessage } from './ThinkingMessage';
 import { ImageMessage } from './ImageMessage';
 import { ImageGrid } from './ImageGrid';
 import { VideoGrid } from './VideoGrid';
-import { CheckpointMessage } from './CheckpointMessage';
 import { ProgressMessage } from './ProgressMessage';
 import { VideoMessage } from './VideoMessage';
 import { ToolCallBlock } from './ToolCallBlock';
@@ -16,7 +15,6 @@ interface ChatViewProps {
   isGenerating: boolean;
   activity?: string | null;
   currentBlocks?: Map<number, ContentBlock>;  // Phase 7: Streaming blocks
-  onContinue?: (options?: string) => void;
 }
 
 // Group consecutive image/video messages for grid display
@@ -75,7 +73,7 @@ function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   return groups;
 }
 
-export function ChatView({ messages, isGenerating, activity, currentBlocks, onContinue }: ChatViewProps) {
+export function ChatView({ messages, isGenerating, activity, currentBlocks }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -107,8 +105,6 @@ export function ChatView({ messages, isGenerating, activity, currentBlocks, onCo
         return <ThinkingMessage message={message} />;
       case 'image':
         return <ImageMessage message={message} />;
-      case 'checkpoint':
-        return <CheckpointMessage message={message} onContinue={onContinue} isGenerating={isGenerating} />;
       case 'progress':
         return <ProgressMessage message={message} />;
       case 'video':
