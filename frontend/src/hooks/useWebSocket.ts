@@ -5,6 +5,7 @@ import type {
   ThinkingMessage,
   ImageMessage,
   VideoMessage,
+  ToolUseMessage,
   SessionStats,
   PipelineState,
   Checkpoint,
@@ -33,6 +34,12 @@ interface WSServerMessage {
   outputDir?: string;
   error?: string;
   timestamp?: string;
+  // For assistant_message events
+  content?: string;
+  // For tool_use events
+  toolName?: string;
+  toolId?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 // WebSocket connection states
@@ -60,6 +67,17 @@ interface WebSocketState {
 interface BlockAccumulator {
   blocks: Map<number, ContentBlock>;
   toolInputBuffers: Map<number, string>;
+}
+
+// Thinking history for accumulating all intermediate content
+interface ThinkingSegment {
+  text: string;
+  hasTools: boolean;
+  blocks: ContentBlock[];
+}
+
+interface ThinkingHistory {
+  segments: ThinkingSegment[];
 }
 
 const initialState: WebSocketState = {
@@ -101,7 +119,8 @@ type AddTextMessage = { role: MessageRole; type: 'text'; content: string; isStre
 type AddThinkingMessage = { role: MessageRole; type: 'thinking'; content: string };
 type AddImageMessage = { role: MessageRole; type: 'image'; src: string; caption?: string };
 type AddVideoMessage = { role: MessageRole; type: 'video'; src: string; poster?: string };
-type AddMessageInput = AddTextMessage | AddThinkingMessage | AddImageMessage | AddVideoMessage;
+type AddToolUseMessage = { role: MessageRole; type: 'tool_use'; toolName: string; toolId: string; toolInput: Record<string, unknown> };
+type AddMessageInput = AddTextMessage | AddThinkingMessage | AddImageMessage | AddVideoMessage | AddToolUseMessage;
 
 /**
  * useWebSocket - WebSocket-based hook for real-time bidirectional communication
@@ -130,6 +149,13 @@ export function useWebSocket() {
   });
   const updateThrottleRef = useRef<number | null>(null);
 
+  // Thinking history: accumulates ALL content during generation
+  // Each segment tracks text + whether it had tool calls
+  const thinkingHistoryRef = useRef<ThinkingHistory>({
+    segments: [],
+  });
+  const thinkingMessageIdRef = useRef<string | null>(null);
+
   // Build WebSocket URL based on current location
   const getWsUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -157,6 +183,9 @@ export function useWebSocket() {
         break;
       case 'video':
         fullMessage = { ...message, id, timestamp } as VideoMessage;
+        break;
+      case 'tool_use':
+        fullMessage = { ...message, id, timestamp, isExpanded: false } as ToolUseMessage;
         break;
     }
 
@@ -250,22 +279,39 @@ export function useWebSocket() {
     // Throttle UI updates to 60fps with RAF batching
     if (updateThrottleRef.current === null) {
       updateThrottleRef.current = requestAnimationFrame(() => {
-        // Build current text from all text/thinking blocks for real-time display
-        const allTextContent = Array.from(blockAccumulatorRef.current.blocks.values())
+        // Build current text from all text/thinking blocks
+        const currentBlocksText = Array.from(blockAccumulatorRef.current.blocks.values())
           .filter(b => b.type === 'text' || b.type === 'thinking')
           .map(b => b.content)
           .join('\n');
 
+        // Combine history + current for display in ThinkingMessage
+        const historyText = thinkingHistoryRef.current.segments.map(s => s.text).join('\n\n');
+        const displayText = historyText
+          ? `${historyText}\n\n${currentBlocksText}`
+          : currentBlocksText;
+
+        // Combine all blocks (history + current)
+        const historyBlocks = thinkingHistoryRef.current.segments.flatMap(s => s.blocks);
+        const allBlocks = [
+          ...historyBlocks,
+          ...Array.from(blockAccumulatorRef.current.blocks.values())
+        ];
+
         setState((prev) => {
-          // Update both currentBlocks AND the streaming message content
-          const currentId = streamingMessageIdRef.current;
+          const currentId = thinkingMessageIdRef.current;
           if (!currentId) {
             return { ...prev, currentBlocks: new Map(blockAccumulatorRef.current.blocks) };
           }
 
           const updatedMessages = prev.messages.map((msg) => {
-            if (msg.id === currentId && (msg.type === 'text' || msg.type === 'thinking')) {
-              return { ...msg, content: allTextContent };
+            if (msg.id === currentId && msg.type === 'thinking') {
+              return {
+                ...msg,
+                content: displayText,
+                blocks: allBlocks,
+                isStreaming: true,
+              };
             }
             return msg;
           });
@@ -273,7 +319,7 @@ export function useWebSocket() {
           return {
             ...prev,
             messages: updatedMessages,
-            streamingText: allTextContent,
+            streamingText: displayText,
             currentBlocks: new Map(blockAccumulatorRef.current.blocks),
           };
         });
@@ -323,80 +369,48 @@ export function useWebSocket() {
     }));
   }, [setActivity]);
 
-  // Convert accumulated blocks into a ChatMessage
-  // Updates the existing streaming placeholder instead of creating new messages
-  const finalizeBlocksToMessage = useCallback(() => {
+  // Finalize message - ALWAYS add to thinking during generation
+  // Final extraction to TextMessage happens in 'complete' handler
+  const finalizeBlocksToMessage = useCallback((_stopReason?: string) => {
     const blocks = blockAccumulatorRef.current.blocks;
     if (blocks.size === 0) return;
 
-    const hasToolUse = Array.from(blocks.values()).some(b => b.type === 'tool_use');
-    const textContent = Array.from(blocks.values())
+    const currentBlocks = Array.from(blocks.values());
+    const textContent = currentBlocks
       .filter(b => b.type === 'text' || b.type === 'thinking')
       .map(b => b.content)
       .join('\n');
 
-    const currentStreamingId = streamingMessageIdRef.current;
+    const hasTools = currentBlocks.some(b => b.type === 'tool_use');
 
-    setState((prev) => {
-      // If we have an existing streaming placeholder, update it
-      if (currentStreamingId) {
-        const updatedMessages = prev.messages.map((msg) => {
-          if (msg.id === currentStreamingId) {
-            if (hasToolUse) {
-              // Convert to ThinkingMessage
-              return {
-                ...msg,
-                type: 'thinking' as const,
-                content: textContent,
-                blocks: Array.from(blocks.values()),
-                isStreaming: false,
-              };
-            } else {
-              // Update as TextMessage
-              return {
-                ...msg,
-                type: 'text' as const,
-                content: textContent,
-                isStreaming: false,
-              };
-            }
-          }
-          return msg;
-        });
-        return { ...prev, messages: updatedMessages, currentBlocks: new Map() };
-      }
-
-      // No existing placeholder - create new message (fallback)
-      if (hasToolUse) {
-        const thinkingMessage: ThinkingMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          type: 'thinking',
-          content: textContent,
-          blocks: Array.from(blocks.values()),
-          timestamp: new Date(),
-        };
-        return { ...prev, messages: [...prev.messages, thinkingMessage], currentBlocks: new Map() };
-      } else if (textContent.trim()) {
-        const textMessage: TextMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          type: 'text',
-          content: textContent,
-          isStreaming: false,
-          timestamp: new Date(),
-        };
-        return { ...prev, messages: [...prev.messages, textMessage], currentBlocks: new Map() };
-      }
-
-      return { ...prev, currentBlocks: new Map() };
+    // Add segment to history (track whether it had tools)
+    thinkingHistoryRef.current.segments.push({
+      text: textContent,
+      hasTools,
+      blocks: currentBlocks,
     });
 
-    // Reset block accumulator
-    blockAccumulatorRef.current = {
-      blocks: new Map(),
-      toolInputBuffers: new Map(),
-    };
+    const allThinkingText = thinkingHistoryRef.current.segments.map(s => s.text).join('\n\n');
+    const allBlocks = thinkingHistoryRef.current.segments.flatMap(s => s.blocks);
+
+    // Update ThinkingMessage with accumulated content
+    setState((prev) => {
+      const updatedMessages = prev.messages.map((msg) => {
+        if (msg.id === thinkingMessageIdRef.current && msg.type === 'thinking') {
+          return {
+            ...msg,
+            content: allThinkingText,
+            blocks: [...allBlocks],
+            isStreaming: false, // Pause between messages
+          };
+        }
+        return msg;
+      });
+      return { ...prev, messages: updatedMessages, currentBlocks: new Map() };
+    });
+
+    // Reset block accumulator for next message
+    blockAccumulatorRef.current = { blocks: new Map(), toolInputBuffers: new Map() };
   }, []);
 
   // Helper: Add image/video messages from checkpoint artifacts
@@ -495,16 +509,36 @@ export function useWebSocket() {
           });
           break;
 
-        case 'message_start':
+        case 'message_start': {
+          // Reset block accumulator for new message
           blockAccumulatorRef.current = {
             blocks: new Map(),
             toolInputBuffers: new Map(),
           };
-          break;
 
-        case 'message_stop':
-          finalizeBlocksToMessage();
+          // Mark ThinkingMessage as streaming again (for subsequent messages after tool_use)
+          if (thinkingMessageIdRef.current) {
+            setState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((msg) => {
+                if (msg.id === thinkingMessageIdRef.current && msg.type === 'thinking') {
+                  return { ...msg, isStreaming: true };
+                }
+                return msg;
+              }),
+            }));
+          }
           break;
+        }
+
+        case 'message_stop': {
+          // Use stopReason to determine if this is a thinking turn or final response
+          // tool_use = Claude wants to use more tools (thinking)
+          // end_turn = Claude finished (final response)
+          const stopReason = (data as any).stopReason as string | undefined;
+          finalizeBlocksToMessage(stopReason);
+          break;
+        }
 
         case 'message_type_hint': {
           const hintType = data.messageType;
@@ -528,33 +562,36 @@ export function useWebSocket() {
           break;
 
         case 'assistant_message': {
-          const newStreamingId = crypto.randomUUID();
-          const newMessage: ChatMessage = {
-            id: newStreamingId,
+          // Phase 7 block events handle streaming text, so this is redundant
+          // Keeping handler for backwards compatibility but not creating new messages
+          // The finalizeBlocksToMessage function handles message creation on message_stop
+          break;
+        }
+
+        case 'tool_use': {
+          // Simple-chatapp pattern: tool_use is a separate message type (collapsible block)
+          const toolName = data.toolName || 'Unknown tool';
+          const toolId = data.toolId || crypto.randomUUID();
+          const toolInput = data.toolInput || {};
+
+          // Set activity indicator
+          setActivity(getActivityLabel(toolName));
+
+          const toolMessage: ToolUseMessage = {
+            id: crypto.randomUUID(),
             role: 'assistant',
-            type: 'text',
-            content: '',
-            isStreaming: true,
+            type: 'tool_use',
+            toolName,
+            toolId,
+            toolInput,
+            isExpanded: false,
             timestamp: new Date(),
           };
 
-          setState((prev) => {
-            const updatedMessages = prev.messages.map((msg) => {
-              if (msg.id === streamingMessageIdRef.current && msg.type === 'text') {
-                return { ...msg, isStreaming: false };
-              }
-              return msg;
-            });
-
-            return {
-              ...prev,
-              messages: [...updatedMessages, newMessage],
-              streamingMessageId: newStreamingId,
-            };
-          });
-
-          streamingMessageIdRef.current = newStreamingId;
-          accumulatedTextRef.current = '';
+          setState((prev) => ({
+            ...prev,
+            messages: [...prev.messages, toolMessage],
+          }));
           break;
         }
 
@@ -574,7 +611,8 @@ export function useWebSocket() {
         }
 
         case 'progress': {
-          // Progress event from PostToolUse hooks - show artifacts only
+          // Progress event from PostToolUse hooks - show artifacts
+          // Claude will provide conversational feedback naturally (via orchestrator prompt)
           const progress = data.progress as Checkpoint;
           if (progress && (progress.artifact || progress.artifacts?.length)) {
             addArtifactMessages(progress);
@@ -594,20 +632,50 @@ export function useWebSocket() {
         case 'complete': {
           const checkpoint = data.checkpoint as Checkpoint | undefined;
 
+          // Extract final response from thinking history
+          // If the last segment had NO tools, it's the final response
+          const segments = thinkingHistoryRef.current.segments;
+          const lastSegment = segments[segments.length - 1];
+          const hasFinalResponse = lastSegment && !lastSegment.hasTools && lastSegment.text.trim();
+
           setState((prev) => {
-            const updatedMessages = prev.messages
-              .map((msg) => {
-                if (msg.id === streamingMessageIdRef.current && msg.type === 'text') {
+            let updatedMessages = prev.messages;
+
+            if (hasFinalResponse && segments.length > 0) {
+              const finalText = lastSegment.text;
+
+              // Remove ThinkingMessage entirely when we have a final response
+              // The final TextMessage is the user-facing output
+              updatedMessages = updatedMessages.filter((msg) =>
+                msg.id !== thinkingMessageIdRef.current
+              );
+
+              // Add TextMessage for final response
+              const textMessage: TextMessage = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                type: 'text',
+                content: finalText,
+                isStreaming: false,
+                timestamp: new Date(),
+              };
+              updatedMessages = [...updatedMessages, textMessage];
+            } else {
+              // No final response to extract - keep everything in ThinkingMessage
+              updatedMessages = updatedMessages.map((msg) => {
+                if (msg.type === 'thinking' || msg.type === 'text') {
                   return { ...msg, isStreaming: false };
                 }
                 return msg;
-              })
-              .filter((msg) => {
-                if (msg.type === 'text' && !msg.content.trim()) {
-                  return false;
-                }
-                return true;
               });
+            }
+
+            // Filter out empty messages
+            updatedMessages = updatedMessages.filter((msg) => {
+              if (msg.type === 'text' && !msg.content.trim()) return false;
+              if (msg.type === 'thinking' && !msg.content.trim()) return false;
+              return true;
+            });
 
             return {
               ...prev,
@@ -624,7 +692,11 @@ export function useWebSocket() {
             };
           });
 
+          // Reset all streaming state for next turn
           streamingMessageIdRef.current = null;
+          thinkingHistoryRef.current = { segments: [] };
+          thinkingMessageIdRef.current = null;
+          blockAccumulatorRef.current = { blocks: new Map(), toolInputBuffers: new Map() };
           break;
         }
 
@@ -764,21 +836,30 @@ export function useWebSocket() {
         content: prompt,
       });
 
-      // Create placeholder for streaming assistant message
-      const assistantMessage = addMessage({
+      // Create ThinkingMessage for streaming - ALL content goes here first
+      // On end_turn, final response will be extracted to TextMessage
+      const thinkingMessage: ThinkingMessage = {
+        id: crypto.randomUUID(),
         role: 'assistant',
-        type: 'text',
+        type: 'thinking',
         content: '',
+        blocks: [],
         isStreaming: true,
-      });
-      streamingMessageIdRef.current = assistantMessage.id;
+        timestamp: new Date(),
+      };
+
+      // Set up refs for streaming
+      thinkingMessageIdRef.current = thinkingMessage.id;
+      streamingMessageIdRef.current = thinkingMessage.id;
       accumulatedTextRef.current = '';
+      thinkingHistoryRef.current = { segments: [] };
 
       setState((prev) => ({
         ...prev,
+        messages: [...prev.messages, thinkingMessage],
         isGenerating: true,
         streamingText: '',
-        streamingMessageId: assistantMessage.id,
+        streamingMessageId: thinkingMessage.id,
         error: null,
         activity: 'Starting...',
       }));
@@ -811,21 +892,28 @@ export function useWebSocket() {
         content: prompt,
       });
 
-      // Create placeholder for streaming assistant message
-      const assistantMessage = addMessage({
+      // Create ThinkingMessage for streaming
+      const thinkingMessage: ThinkingMessage = {
+        id: crypto.randomUUID(),
         role: 'assistant',
-        type: 'text',
+        type: 'thinking',
         content: '',
+        blocks: [],
         isStreaming: true,
-      });
-      streamingMessageIdRef.current = assistantMessage.id;
+        timestamp: new Date(),
+      };
+
+      thinkingMessageIdRef.current = thinkingMessage.id;
+      streamingMessageIdRef.current = thinkingMessage.id;
       accumulatedTextRef.current = '';
+      thinkingHistoryRef.current = { segments: [] };
 
       setState((prev) => ({
         ...prev,
+        messages: [...prev.messages, thinkingMessage],
         isGenerating: true,
         streamingText: '',
-        streamingMessageId: assistantMessage.id,
+        streamingMessageId: thinkingMessage.id,
         error: null,
         activity: 'Continuing...',
       }));
@@ -913,6 +1001,9 @@ export function useWebSocket() {
   const resetSession = useCallback(() => {
     streamingMessageIdRef.current = null;
     accumulatedTextRef.current = '';
+    thinkingHistoryRef.current = { segments: [] };
+    thinkingMessageIdRef.current = null;
+    blockAccumulatorRef.current = { blocks: new Map(), toolInputBuffers: new Map() };
     setState((prev) => ({
       ...initialState,
       connectionState: prev.connectionState, // Keep connection state

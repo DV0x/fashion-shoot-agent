@@ -27,7 +27,8 @@ export interface WSServerMessage {
     | 'session_init'
     | 'text_delta'
     | 'message_type_hint'
-    | 'assistant_message'
+    | 'assistant_message'  // Text content from assistant
+    | 'tool_use'           // Tool invocation (separate from text)
     | 'system'
     | 'progress'
     | 'checkpoint'
@@ -36,12 +37,14 @@ export interface WSServerMessage {
     | 'error'
     | 'pong'
     | 'heartbeat'
-    // Phase 7 block-level events
+    // Phase 7 block-level events (kept for streaming, but not primary)
     | 'block_start'
     | 'block_delta'
     | 'block_end'
     | 'message_start'
     | 'message_stop';
+  // Content field for assistant_message
+  content?: string;
   sessionId?: string;
   text?: string;
   messageType?: 'thinking' | 'response';
@@ -65,6 +68,8 @@ export interface WSServerMessage {
   inputJsonDelta?: string;
   toolInput?: Record<string, unknown>;
   toolDuration?: number;
+  // message_stop event field
+  stopReason?: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
 }
 
 // Events emitted by WebSocketHandler

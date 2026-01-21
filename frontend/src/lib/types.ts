@@ -147,12 +147,21 @@ export interface VideoMessage extends BaseMessage {
   label?: string;  // e.g., "Clip 1", "Final Video"
 }
 
+export interface ToolUseMessage extends BaseMessage {
+  type: 'tool_use';
+  toolName: string;
+  toolId: string;
+  toolInput: Record<string, unknown>;
+  isExpanded?: boolean;
+}
+
 export type ChatMessage =
   | TextMessage
   | ThinkingMessage
   | ImageMessage
   | ProgressMessage
-  | VideoMessage;
+  | VideoMessage
+  | ToolUseMessage;
 
 // Preset Types
 export type PosePreset =

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType, ContentBlock } from '../../lib/types';
+import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType, ToolUseMessage as ToolUseMessageType } from '../../lib/types';
 import { TextMessage } from './TextMessage';
 import { ThinkingMessage } from './ThinkingMessage';
 import { ImageMessage } from './ImageMessage';
@@ -8,13 +8,12 @@ import { ImageGrid } from './ImageGrid';
 import { VideoGrid } from './VideoGrid';
 import { ProgressMessage } from './ProgressMessage';
 import { VideoMessage } from './VideoMessage';
-import { ToolCallBlock } from './ToolCallBlock';
+import { ToolUseBlock } from './ToolUseBlock';
 
 interface ChatViewProps {
   messages: ChatMessage[];
   isGenerating: boolean;
   activity?: string | null;
-  currentBlocks?: Map<number, ContentBlock>;  // Phase 7: Streaming blocks
 }
 
 // Group consecutive image/video messages for grid display
@@ -73,29 +72,15 @@ function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   return groups;
 }
 
-export function ChatView({ messages, isGenerating, activity, currentBlocks }: ChatViewProps) {
+export function ChatView({ messages, isGenerating, activity }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Phase 7: Convert currentBlocks to array for rendering
-  const streamingBlocks = useMemo(() => {
-    if (!currentBlocks || currentBlocks.size === 0) return [];
-    return Array.from(currentBlocks.values()).sort((a, b) => a.index - b.index);
-  }, [currentBlocks]);
-
   // Group consecutive images for grid display
   const messageGroups = useMemo(() => groupMessages(messages), [messages]);
-
-  // DEBUG: Log messages and groups
-  console.log('[CHATVIEW DEBUG] Messages:', messages.map(m => ({ id: m.id, type: m.type })));
-  console.log('[CHATVIEW DEBUG] Message groups:', messageGroups.map(g => {
-    if (g.type === 'image-grid') return { type: 'image-grid', count: g.images.length };
-    if (g.type === 'video-grid') return { type: 'video-grid', count: g.videos.length };
-    return { type: 'single', messageType: g.message.type };
-  }));
 
   const renderMessage = (message: ChatMessage) => {
     switch (message.type) {
@@ -109,6 +94,8 @@ export function ChatView({ messages, isGenerating, activity, currentBlocks }: Ch
         return <ProgressMessage message={message} />;
       case 'video':
         return <VideoMessage message={message} />;
+      case 'tool_use':
+        return <ToolUseBlock message={message as ToolUseMessageType} isExecuting={isGenerating} />;
       default:
         return null;
     }
@@ -178,34 +165,6 @@ export function ChatView({ messages, isGenerating, activity, currentBlocks }: Ch
         <AnimatePresence initial={false}>
           {messageGroups.map((group) => renderGroup(group))}
         </AnimatePresence>
-
-        {/* Phase 7: Streaming blocks display during generation */}
-        {isGenerating && streamingBlocks.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[75%]"
-          >
-            <div className="thinking-message">
-              {/* Text blocks */}
-              {streamingBlocks
-                .filter(b => b.type === 'text' || b.type === 'thinking')
-                .map(block => (
-                  <p key={block.id} className="text-sm text-text-muted whitespace-pre-wrap break-words">
-                    {block.content}
-                    {block.isStreaming && <span className="animate-pulse">|</span>}
-                  </p>
-                ))}
-
-              {/* Tool blocks */}
-              {streamingBlocks
-                .filter(b => b.type === 'tool_use')
-                .map(block => (
-                  <ToolCallBlock key={block.id} block={block} />
-                ))}
-            </div>
-          </motion.div>
-        )}
 
         {/* Thinking/Activity indicator with 3-dot animation */}
         {isGenerating && (

@@ -17,6 +17,7 @@ export interface ProgressData {
   type?: 'image' | 'image-grid' | 'video' | 'video-grid';
   message: string;
   isFinal?: boolean;
+  isIntermediateClip?: boolean;  // Video clips (video-1.mp4 etc.) that shouldn't pause
 }
 
 // Legacy alias for backwards compatibility
@@ -71,13 +72,21 @@ function parseArtifactEvents(toolName: string, toolResponse: any): ProgressData[
 
       if (parsed.type === 'artifact' && parsed.path) {
         console.log(`🎨 [ARTIFACT] Found: ${parsed.path} (${parsed.artifactType})`);
+
+        // Check if this is a final video (in final/ folder) or intermediate video clip
+        const isFinalVideo = parsed.artifactType === 'video' && parsed.path.includes('final/');
+        const isIntermediateClip = parsed.artifactType === 'video' &&
+          parsed.path.includes('outputs/videos/') &&
+          /video-\d+\.mp4$/.test(parsed.path);
+
         events.push({
           stage: parsed.artifactType || 'unknown',
           status: 'complete',
           artifact: parsed.path,
           type: parsed.artifactType,
           message: `${parsed.artifactType || 'Artifact'} ready: ${parsed.path}`,
-          isFinal: parsed.artifactType === 'video' && parsed.path.includes('final/')
+          isFinal: isFinalVideo,
+          isIntermediateClip  // New flag for video clips that shouldn't pause
         });
       } else if (parsed.type === 'artifacts' && parsed.paths?.length) {
         console.log(`🎨 [ARTIFACTS] Found: ${parsed.paths.length} files (${parsed.artifactType})`);
@@ -98,12 +107,17 @@ function parseArtifactEvents(toolName: string, toolResponse: any): ProgressData[
 }
 
 /**
- * Create PostToolUse hooks for artifact detection
- * Parses script stdout for artifact events and emits progress
- * The agent decides when to pause naturally via its responses
+ * Create PostToolUse hooks for artifact detection and progress emission
+ * Parses script stdout for artifact events and emits progress to frontend
+ *
+ * IMPORTANT: We do NOT force stops here anymore. Instead, we rely on the
+ * orchestrator prompt to instruct Claude to pause naturally after artifacts.
+ * This allows Claude to provide conversational feedback about what it created.
+ *
  * @param sessionId - The session ID for emitting progress events
+ * @param isAutonomous - Whether autonomous (YOLO) mode is enabled (unused now, kept for API compatibility)
  */
-function createProgressHooks(sessionId: string) {
+function createProgressHooks(sessionId: string, _isAutonomous: boolean) {
   return {
     PostToolUse: [{
       hooks: [async (input: any, _toolUseId: string | undefined, _options: { signal: AbortSignal }) => {
@@ -113,13 +127,15 @@ function createProgressHooks(sessionId: string) {
           input.tool_response
         );
 
-        // Emit each artifact as a progress event
+        // Emit each artifact as a progress event (frontend displays images/videos)
         for (const progress of artifactEvents) {
           console.log(`📊 PROGRESS: ${progress.stage} - ${progress.message}`);
           progressEmitter.emit('progress', { sessionId, progress });
         }
 
-        // Always continue - agent decides when to pause via its response
+        // Always continue - let Claude control pausing via natural conversation
+        // The orchestrator prompt instructs Claude to pause after artifacts
+        // This allows Claude to explain what it created before pausing
         return { continue: true };
       }]
     }]
@@ -305,7 +321,7 @@ export class AIClient {
       systemPrompt,  // Use dynamic or default system prompt (with autonomous injection if enabled)
       includePartialMessages: true,  // Enable real-time token streaming
       abortController,
-      hooks: createProgressHooks(session.id)
+      hooks: createProgressHooks(session.id, isAutonomous)
     };
 
     console.log(`🔄 Query with session ${session.id}`, {

@@ -68,19 +68,46 @@ You have two skills that work together:
 6. Generate 5 video clips (frame pairs: 1→2, 2→3, 3→4, 4→5, 5→6)
 7. Stitch into final video
 
-But you're not locked into this! If the user just wants a hero image, stop there. If they want to skip ahead, adapt.
+If the user just wants a hero image, stop there. If they want to skip ahead, adapt.
 
-## When to Pause for Feedback
+## CRITICAL: Mandatory Pause After Each Artifact
 
-Pause naturally by asking questions when:
+**YOU MUST STOP AND WAIT FOR USER FEEDBACK after generating any visual artifact.**
 
-- **After generating visuals**: "Here's the hero image. Does this capture what you're going for?"
-- **Creative decisions**: "I'm thinking editorial-drama with studio-black for that edgy look. Sound right?"
-- **Before expensive operations**: "Ready to generate the 5 video clips? This takes a few minutes each."
-- **When uncertain**: "The pose feels a bit stiff. Should I try a different angle?"
-- **User requested review**: They explicitly asked to see something before continuing
+After running a script that creates an image or video:
+1. **DESCRIBE** what you created and your creative choices
+2. **ASK** for the user's feedback or approval
+3. **END YOUR TURN** - do NOT call another tool until the user responds
 
-Don't pause for trivial confirmations. Keep momentum when the direction is clear.
+### Pause Points (MANDATORY)
+
+| After This | Say Something Like |
+|------------|-------------------|
+| Hero image | "Here's the hero image with [pose] against [background]. I chose this because [reason]. What do you think? Should I adjust anything, or proceed to the contact sheet?" |
+| Contact sheet | "I've created the contact sheet with 6 different angles. These frames will become keyframes for the video. Do these look good, or should I regenerate any?" |
+| Cropped frames | "The 6 frames are ready. Before I generate the video clips (which takes a few minutes each), do you want to review or modify any frames?" |
+| Video clips complete | "All 5 video clips are generated. Ready to stitch them into the final video?" |
+| Final video | "Here's your finished fashion video! Let me know if you'd like any adjustments." |
+
+### How to Pause Correctly
+
+**CORRECT** (ends turn, waits for user):
+- Run tool: Bash (generate-image.ts)
+- Tool returns: artifact created
+- You say: "Here's the hero image! I went with editorial-drama pose and studio-black background to match your edgy vision. The dramatic lighting creates strong contrast. What do you think?"
+- Turn ends, user responds
+
+**WRONG** (continues without waiting):
+- Run tool: Bash (generate-image.ts)
+- Tool returns: artifact created
+- You say: "Hero image done. Now generating contact sheet..."
+- You immediately call another tool ← DON'T DO THIS
+
+### Exceptions (when NOT to pause)
+
+- **YOLO mode**: User said "/yolo" - run entire pipeline without pauses
+- **Intermediate video clips**: Don't pause after each video-1.mp4, video-2.mp4, etc. Wait until ALL clips are done, then pause once.
+- **User explicitly said to continue**: e.g., "looks good, keep going" or "proceed with everything"
 
 ## YOLO Mode
 
@@ -167,6 +194,72 @@ This means:
 | crop-frames.ts fails | Use fallback: crop-frames-ffmpeg.ts |
 | FFmpeg error | Check all input videos exist |
 | Script not found | Verify you're in agent/ directory |
+
+## Handling Long-Running Background Tasks
+
+**CRITICAL**: Some operations take significant time and may run in the background:
+- **generate-video.ts** (Kling AI): 2-3 minutes per clip
+- **stitch-videos-eased.ts** (FFmpeg): 1-2 minutes for frame extraction and encoding
+
+When these scripts run, they may return a background task ID instead of completing immediately.
+
+### How to properly wait for background tasks:
+
+1. **When you get a background task ID** (e.g., "Command running in background with ID: b1df6ca"):
+   - Use \`TaskOutput\` with \`block: true\` and \`timeout: 300000\` (5 minutes) to wait
+   - Example: \`{"task_id": "b1df6ca", "block": true, "timeout": 300000}\`
+
+2. **If TaskOutput returns "not_ready"**:
+   - Call TaskOutput again immediately with the same parameters
+   - Keep polling until you get "success" or an error
+   - **DO NOT** just output text saying "let me wait" - you must make another tool call
+
+3. **For multiple video clips**:
+   - Start all 5 clips in background (faster)
+   - Then wait for each one using TaskOutput with \`block: true\`
+   - Check each task sequentially: task1, task2, task3, task4, task5
+   - Only proceed to stitching after ALL clips are confirmed complete
+
+4. **Verify completion by checking files**:
+   - After TaskOutput returns success, verify with: \`ls -la outputs/videos/\` or \`ls -la outputs/final/\`
+   - Check the timestamps are from the current session (today's date)
+   - Video clips: video-1.mp4 through video-5.mp4
+   - Final video: fashion-video.mp4
+
+### Example pattern for video generation and stitching:
+
+\`\`\`
+# Start all clips in background
+Run generate-video.ts for clip 1 → get task_id_1
+Run generate-video.ts for clip 2 → get task_id_2
+... (clips 3, 4, 5)
+
+# Wait for each to complete (DO NOT skip this step)
+TaskOutput(task_id_1, block=true, timeout=300000) → wait for success
+TaskOutput(task_id_2, block=true, timeout=300000) → wait for success
+... (tasks 3, 4, 5)
+
+# Verify all video clips exist with current timestamps
+ls -la outputs/videos/
+
+# Run stitching (also runs in background)
+stitch-videos-eased.ts → get task_id_stitch
+
+# Wait for stitching to complete
+TaskOutput(task_id_stitch, block=true, timeout=300000) → wait for success
+
+# Verify final video exists
+ls -la outputs/final/
+\`\`\`
+
+### Key rules for background tasks:
+
+1. **Always use \`block: true\`** - This makes TaskOutput wait instead of returning immediately
+2. **Use long timeout: \`timeout: 300000\`** (5 minutes) - Video operations take time
+3. **If you get "timeout"** - Call TaskOutput again with block=true, don't give up
+4. **If you get "not_ready"** - You used block=false by mistake, call again with block=true
+
+**IMPORTANT**: Never end your turn with just text like "The videos are processing, let me wait..." You MUST make a tool call to actually wait. If you output text without a tool call, the session will end and the background tasks will be lost.
 
 ## Rules
 

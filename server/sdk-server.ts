@@ -392,18 +392,23 @@ npx tsx scripts/generate-image.ts --prompt "..." ${inputFlags} --output outputs/
           }
 
           case 'message_stop': {
-            wsHandler.broadcastToSession(campaignSessionId, { type: 'message_stop' } as WSServerMessage);
+            // Include stop_reason so frontend knows if this is a thinking turn (tool_use) or final response (end_turn)
+            // stop_reason comes from the SDK's message object in the message_stop event
+            const stopReason = event.message?.stop_reason || event.stop_reason || 'end_turn';
+            console.log(`📍 [MESSAGE_STOP] stop_reason: ${stopReason}`, event.message ? 'has message' : 'no message');
+            wsHandler.broadcastToSession(campaignSessionId, { type: 'message_stop', stopReason } as WSServerMessage);
             break;
           }
         }
       } else if (message.type === 'assistant') {
-        // Phase 7: Don't send assistant_message - block events already handle streaming
-        // Just track the text for the final complete event
+        // Collect assistant messages for final response (used in 'complete' event)
+        // Phase 7 block events handle real-time streaming, so no need to send assistant_message here
         const msgContent = (message as any).message?.content;
         if (Array.isArray(msgContent)) {
-          const text = msgContent.find((c: any) => c.type === 'text')?.text || '';
-          if (text) {
-            assistantMessages.push(text);
+          for (const block of msgContent) {
+            if (block.type === 'text' && block.text) {
+              assistantMessages.push(block.text);
+            }
           }
         }
         // Reset for next message
@@ -542,18 +547,23 @@ wsHandler.on('continue', async ({ clientId, sessionId, content }) => {
           }
 
           case 'message_stop': {
-            wsHandler.broadcastToSession(sessionId, { type: 'message_stop' } as WSServerMessage);
+            // Include stop_reason so frontend knows if this is a thinking turn (tool_use) or final response (end_turn)
+            // stop_reason comes from the SDK's message object in the message_stop event
+            const stopReason = event.message?.stop_reason || event.stop_reason || 'end_turn';
+            console.log(`📍 [MESSAGE_STOP] stop_reason: ${stopReason}`, event.message ? 'has message' : 'no message');
+            wsHandler.broadcastToSession(sessionId, { type: 'message_stop', stopReason } as WSServerMessage);
             break;
           }
         }
       } else if (message.type === 'assistant') {
-        // Phase 7: Don't send assistant_message - block events already handle streaming
-        // Just track the text for the final complete event
+        // Collect assistant messages for final response (used in 'complete' event)
+        // Phase 7 block events handle real-time streaming, so no need to send assistant_message here
         const msgContent = (message as any).message?.content;
         if (Array.isArray(msgContent)) {
-          const text = msgContent.find((c: any) => c.type === 'text')?.text || '';
-          if (text) {
-            assistantMessages.push(text);
+          for (const block of msgContent) {
+            if (block.type === 'text' && block.text) {
+              assistantMessages.push(block.text);
+            }
           }
         }
         // Reset for next message
