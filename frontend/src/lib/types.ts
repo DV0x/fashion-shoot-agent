@@ -161,7 +161,75 @@ export type ChatMessage =
   | ImageMessage
   | ProgressMessage
   | VideoMessage
-  | ToolUseMessage;
+  | ToolUseMessage
+  | ActionMessage;
+
+// Action Instance Pattern Types
+export type ActionPipelineStage = 'hero' | 'contact-sheet' | 'frames' | 'resize' | 'clips' | 'final';
+export type ActionParamType = 'enum' | 'text' | 'boolean' | 'number';
+
+export interface ActionParamOption {
+  value: string;
+  label: string;
+}
+
+export interface ActionParamSchema {
+  type: ActionParamType;
+  label: string;
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  // For enum type
+  options?: ActionParamOption[];
+  // For number type
+  min?: number;
+  max?: number;
+  step?: number;
+  // For text type
+  placeholder?: string;
+  multiline?: boolean;
+  // Display hints
+  locked?: boolean;
+  advanced?: boolean;
+}
+
+export interface ActionTemplate {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  stage: ActionPipelineStage;
+  parameters: Record<string, ActionParamSchema>;
+}
+
+export interface ActionInstance {
+  instanceId: string;
+  sessionId: string;
+  templateId: string;
+  label: string;
+  params: Record<string, unknown>;
+  timestamp: string;
+  status?: 'pending' | 'executing' | 'completed' | 'error';
+}
+
+export interface ActionResult {
+  success: boolean;
+  artifact?: string;
+  artifacts?: string[];
+  message?: string;
+  error?: string;
+  duration?: number;
+}
+
+// Action message type for chat
+export interface ActionMessage extends BaseMessage {
+  type: 'action';
+  instance: ActionInstance;
+  template: ActionTemplate;
+  result?: ActionResult;
+  isExecuting?: boolean;
+  awaitingContinuation?: boolean;
+}
 
 // Preset Types
 export type PosePreset =

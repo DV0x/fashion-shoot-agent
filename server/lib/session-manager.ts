@@ -43,8 +43,6 @@ export interface SessionInfo {
     forkedFrom?: string;  // Base session ID if this is a fork
     forkTimestamp?: string;  // When this fork was created
     forkPurpose?: string;  // Why this fork was created (e.g., "emotional-angle-variant")
-    // Autonomous mode - runs pipeline without pauses
-    autonomousMode?: boolean;
   };
   messages: any[];  // Store message history
   turnCount: number;
@@ -179,33 +177,6 @@ export class SessionManager {
     if (this.autoSave) {
       await this.saveSession(sessionId);
     }
-  }
-
-  /**
-   * Set autonomous mode for a session (YOLO mode - runs without pauses)
-   */
-  async setAutonomousMode(sessionId: string, enabled: boolean): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    session.metadata.autonomousMode = enabled;
-    session.lastAccessedAt = new Date();
-
-    console.log(`🚀 Autonomous mode ${enabled ? 'enabled' : 'disabled'} for session: ${sessionId}`);
-
-    if (this.autoSave) {
-      await this.saveSession(sessionId);
-    }
-  }
-
-  /**
-   * Check if session is in autonomous mode
-   */
-  isAutonomousMode(sessionId: string): boolean {
-    const session = this.sessions.get(sessionId);
-    return session?.metadata.autonomousMode ?? false;
   }
 
   /**

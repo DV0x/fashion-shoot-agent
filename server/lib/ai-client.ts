@@ -8,135 +8,126 @@ import { EventEmitter } from 'events';
 import { SessionManager } from './session-manager.js';
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator-prompt.js';
 
-// Progress data structure (for pipeline tracking without forced stops)
-export interface ProgressData {
-  stage: string;  // Dynamic stage names from workflow config
-  status: 'complete' | 'error';
-  artifact?: string;
-  artifacts?: string[];
-  type?: 'image' | 'image-grid' | 'video' | 'video-grid';
-  message: string;
-  isFinal?: boolean;
-  isIntermediateClip?: boolean;  // Video clips (video-1.mp4 etc.) that shouldn't pause
+// Action proposal event (from action-proposer skill)
+export interface ActionProposal {
+  type: 'action_proposal';
+  instanceId: string;
+  templateId: string;
+  label: string;
+  params: Record<string, unknown>;
+  timestamp: string;
 }
 
-// Legacy alias for backwards compatibility
-export type CheckpointData = ProgressData;
+// Event emitter for action proposals
+// Server listens to this and forwards to frontend via WebSocket
+export const actionEmitter = new EventEmitter();
 
-// Event emitter for real-time progress notifications
-// Emits 'progress' events for pipeline tracking (no forced stops)
-export const progressEmitter = new EventEmitter();
-
-// Legacy alias for backwards compatibility
-export const checkpointEmitter = progressEmitter;
+// Scripts that should be blocked (must use action-proposer instead)
+const BLOCKED_SCRIPTS = [
+  'generate-image',
+  'generate-video',
+  'crop-frames',
+  'crop-frames-ffmpeg',
+  'resize-frames',
+  'stitch-videos-eased',
+  'apply-speed-curve',
+];
 
 /**
- * Parse script output for artifact events
- * Scripts emit JSON events like:
- * - {"type":"artifact","path":"outputs/hero.png","artifactType":"image"}
- * - {"type":"artifacts","paths":["outputs/frames/frame-1.png",...],"artifactType":"image-grid"}
- *
- * Works with both direct Bash output and TaskOutput (background task) results
+ * Check if a Bash command is trying to run a blocked script
  */
-function parseArtifactEvents(toolName: string, toolResponse: any): ProgressData[] {
-  console.log(`🔧 [TOOL] ${toolName} completed`);
+function isBlockedScript(command: string): boolean {
+  return BLOCKED_SCRIPTS.some(script => command.includes(script));
+}
 
-  if (toolName !== 'Bash' && toolName !== 'TaskOutput') return [];
-
-  // Get output string from response
-  let output: string;
-  if (typeof toolResponse === 'string') {
-    output = toolResponse;
-  } else if (toolResponse?.stdout) {
-    output = toolResponse.stdout;
-  } else {
-    output = JSON.stringify(toolResponse);
-  }
-
-  // Unescape if TaskOutput returned escaped JSON (has \" instead of ")
-  if (output.includes('\\"')) {
-    output = output.replace(/\\"/g, '"').replace(/\\n/g, '\n');
-  }
-
-  console.log(`📝 [OUTPUT] ...${output.substring(Math.max(0, output.length - 500))}`);
-
-  const events: ProgressData[] = [];
-
-  // Parse each line looking for artifact JSON
+/**
+ * Parse action proposal from script output
+ */
+function parseActionProposal(output: string): ActionProposal | null {
   for (const line of output.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
 
     try {
       const parsed = JSON.parse(trimmed);
-
-      if (parsed.type === 'artifact' && parsed.path) {
-        console.log(`🎨 [ARTIFACT] Found: ${parsed.path} (${parsed.artifactType})`);
-
-        // Check if this is a final video (in final/ folder) or intermediate video clip
-        const isFinalVideo = parsed.artifactType === 'video' && parsed.path.includes('final/');
-        const isIntermediateClip = parsed.artifactType === 'video' &&
-          parsed.path.includes('outputs/videos/') &&
-          /video-\d+\.mp4$/.test(parsed.path);
-
-        events.push({
-          stage: parsed.artifactType || 'unknown',
-          status: 'complete',
-          artifact: parsed.path,
-          type: parsed.artifactType,
-          message: `${parsed.artifactType || 'Artifact'} ready: ${parsed.path}`,
-          isFinal: isFinalVideo,
-          isIntermediateClip  // New flag for video clips that shouldn't pause
-        });
-      } else if (parsed.type === 'artifacts' && parsed.paths?.length) {
-        console.log(`🎨 [ARTIFACTS] Found: ${parsed.paths.length} files (${parsed.artifactType})`);
-        events.push({
-          stage: parsed.artifactType || 'unknown',
-          status: 'complete',
-          artifacts: parsed.paths,
-          type: parsed.artifactType,
-          message: `${parsed.paths.length} ${parsed.artifactType || 'files'} ready`
-        });
+      if (parsed.type === 'action_proposal' && parsed.instanceId && parsed.templateId) {
+        return parsed as ActionProposal;
       }
     } catch {
       // Not valid JSON, skip
     }
   }
-
-  return events;
+  return null;
 }
 
 /**
- * Create PostToolUse hooks for artifact detection and progress emission
- * Parses script stdout for artifact events and emits progress to frontend
- *
- * IMPORTANT: We do NOT force stops here anymore. Instead, we rely on the
- * orchestrator prompt to instruct Claude to pause naturally after artifacts.
- * This allows Claude to provide conversational feedback about what it created.
- *
- * @param sessionId - The session ID for emitting progress events
- * @param isAutonomous - Whether autonomous (YOLO) mode is enabled (unused now, kept for API compatibility)
+ * Create hooks for the action-based workflow
+ * - PreToolUse: Block direct script execution
+ * - PostToolUse: Intercept action proposals from action-proposer skill
  */
-function createProgressHooks(sessionId: string, _isAutonomous: boolean) {
+function createActionHooks(sessionId: string) {
   return {
-    PostToolUse: [{
-      hooks: [async (input: any, _toolUseId: string | undefined, _options: { signal: AbortSignal }) => {
-        // Parse script output for artifact events
-        const artifactEvents = parseArtifactEvents(
-          input.tool_name,
-          input.tool_response
-        );
-
-        // Emit each artifact as a progress event (frontend displays images/videos)
-        for (const progress of artifactEvents) {
-          console.log(`📊 PROGRESS: ${progress.stage} - ${progress.message}`);
-          progressEmitter.emit('progress', { sessionId, progress });
+    PreToolUse: [{
+      hooks: [async (input: any) => {
+        // Only check Bash commands
+        if (input.tool_name !== 'Bash') {
+          return {}; // Allow by default (no explicit decision needed)
         }
 
-        // Always continue - let Claude control pausing via natural conversation
-        // The orchestrator prompt instructs Claude to pause after artifacts
-        // This allows Claude to explain what it created before pausing
-        return { continue: true };
+        const command = input.tool_input?.command || '';
+
+        // Block direct script execution
+        if (isBlockedScript(command)) {
+          console.log(`🚫 [BLOCKED] Direct script execution: ${command.substring(0, 100)}...`);
+          return {
+            decision: 'block' as const,
+            message: `Direct script execution is not allowed. Use the action-proposer skill instead to propose this action for user approval.
+
+Example:
+npx tsx .claude/skills/action-proposer/propose-action.ts \\
+  --templateId generate_hero \\
+  --label "Your Action Label" \\
+  --params '{"prompt": "...", "aspectRatio": "3:2"}'
+
+The user will see an ActionCard with editable parameters and control execution.`
+          };
+        }
+
+        return {}; // Allow by default
+      }]
+    }],
+
+    PostToolUse: [{
+      hooks: [async (input: any) => {
+        // Only check Bash commands (where action-proposer runs)
+        if (input.tool_name !== 'Bash') {
+          return { continue: true as const };
+        }
+
+        // Get output string from response
+        let output: string;
+        if (typeof input.tool_response === 'string') {
+          output = input.tool_response;
+        } else if (input.tool_response?.stdout) {
+          output = input.tool_response.stdout;
+        } else {
+          output = JSON.stringify(input.tool_response);
+        }
+
+        // Check for action proposal
+        const proposal = parseActionProposal(output);
+        if (proposal) {
+          console.log(`📋 [ACTION PROPOSAL] ${proposal.templateId}: ${proposal.label}`);
+          console.log(`   Instance: ${proposal.instanceId}`);
+
+          // Emit proposal event - server will forward to frontend
+          actionEmitter.emit('proposal', { sessionId, proposal });
+
+          // Continue execution (Claude should stop after proposing)
+          return { continue: true as const };
+        }
+
+        return { continue: true as const };
       }]
     }]
   };
@@ -214,8 +205,8 @@ export class AIClient {
 
     this.defaultOptions = {
       cwd: projectRoot,
-      model: 'claude-sonnet-4-20250514',
-      maxTurns: 100,  // Full pipeline needs ~50-80 turns (hero + contact + 6 frames + 6 videos + stitch)
+      model: 'claude-opus-4-5-20251101',
+      maxTurns: 100,  // Full pipeline needs ~50-80 turns
       settingSources: ['project'],  // Use project settings only (not user settings)
       permissionMode: 'default',    // Don't block on permission prompts in headless server
       canUseTool: async (_toolName: string, input: Record<string, unknown>) => ({
@@ -225,14 +216,14 @@ export class AIClient {
       allowedTools: [
         "Read",
         "Write",
-        "Edit",       // Added: file editing
+        "Edit",
         "Glob",
-        "Grep",       // Added: content search
+        "Grep",
         "Bash",
         "Task",
         "Skill",
-        "TodoWrite",  // Added: task tracking
-        "WebFetch"    // Added: web content fetching
+        "TodoWrite",
+        "WebFetch"
       ],
       systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT
     };
@@ -290,13 +281,13 @@ export class AIClient {
    * Supports multimodal input (text + images)
    * @param prompt - The user prompt
    * @param sessionId - Optional session ID
-   * @param metadata - Optional metadata including systemPrompt and autonomousMode
+   * @param metadata - Optional metadata including systemPrompt
    * @param imagePaths - Optional image paths for multimodal input
    */
   async *queryWithSession(
     prompt: string,
     sessionId?: string,
-    metadata?: { systemPrompt?: string; autonomousMode?: boolean },
+    metadata?: { systemPrompt?: string },
     imagePaths?: string[]
   ) {
     const session = await this.sessionManager.getOrCreateSession(sessionId);
@@ -306,29 +297,22 @@ export class AIClient {
     // Store AbortController for potential cancellation
     this.activeGenerations.set(session.id, abortController);
 
-    // Check if autonomous mode is enabled (from metadata or session)
-    const isAutonomous = metadata?.autonomousMode || this.sessionManager.isAutonomousMode(session.id);
-
-    // Build system prompt with optional autonomous mode injection
-    let systemPrompt = metadata?.systemPrompt || this.defaultOptions.systemPrompt;
-    if (isAutonomous && systemPrompt) {
-      systemPrompt = `${systemPrompt}\n\n## AUTONOMOUS MODE ACTIVE\nThe user has requested autonomous execution. Run the entire pipeline to completion without pausing for feedback. Make sensible creative decisions on their behalf. Only stop for errors or when the final video is complete.`;
-    }
+    // Use custom or default system prompt
+    const systemPrompt = metadata?.systemPrompt || this.defaultOptions.systemPrompt;
 
     const queryOptions = {
       ...this.defaultOptions,
       ...resumeOptions,
-      systemPrompt,  // Use dynamic or default system prompt (with autonomous injection if enabled)
+      systemPrompt,
       includePartialMessages: true,  // Enable real-time token streaming
       abortController,
-      hooks: createProgressHooks(session.id, isAutonomous)
+      hooks: createActionHooks(session.id)
     };
 
     console.log(`🔄 Query with session ${session.id}`, {
       hasResume: !!resumeOptions.resume,
       turnCount: session.turnCount,
-      imageCount: imagePaths?.length || 0,
-      autonomousMode: isAutonomous
+      imageCount: imagePaths?.length || 0
     });
 
     try {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType, ToolUseMessage as ToolUseMessageType } from '../../lib/types';
+import type { ChatMessage, ImageMessage as ImageMessageType, VideoMessage as VideoMessageType, ToolUseMessage as ToolUseMessageType, ActionMessage as ActionMessageType } from '../../lib/types';
 import { TextMessage } from './TextMessage';
 import { ThinkingMessage } from './ThinkingMessage';
 import { ImageMessage } from './ImageMessage';
@@ -9,11 +9,19 @@ import { VideoGrid } from './VideoGrid';
 import { ProgressMessage } from './ProgressMessage';
 import { VideoMessage } from './VideoMessage';
 import { ToolUseBlock } from './ToolUseBlock';
+import { ActionCard } from './ActionCard';
+import { ContinueButton } from './ContinueButton';
 
 interface ChatViewProps {
   messages: ChatMessage[];
   isGenerating: boolean;
   activity?: string | null;
+  // Action Instance Pattern
+  awaitingContinuation?: boolean;
+  executingActionId?: string | null;
+  onExecuteAction?: (instanceId: string, params: Record<string, unknown>, originalParams: Record<string, unknown>) => void;
+  onContinueAction?: (instanceId: string) => void;
+  onContinue?: () => void;
 }
 
 // Group consecutive image/video messages for grid display
@@ -72,15 +80,35 @@ function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   return groups;
 }
 
-export function ChatView({ messages, isGenerating, activity }: ChatViewProps) {
+export function ChatView({
+  messages,
+  isGenerating,
+  activity,
+  awaitingContinuation = false,
+  executingActionId = null,
+  onExecuteAction,
+  onContinueAction,
+  onContinue,
+}: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, awaitingContinuation]);
 
   // Group consecutive images for grid display
   const messageGroups = useMemo(() => groupMessages(messages), [messages]);
+
+  // Find the last action message that's awaiting continuation
+  const lastAwaitingAction = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === 'action' && (msg as ActionMessageType).awaitingContinuation) {
+        return msg as ActionMessageType;
+      }
+    }
+    return null;
+  }, [messages]);
 
   const renderMessage = (message: ChatMessage) => {
     switch (message.type) {
@@ -96,6 +124,14 @@ export function ChatView({ messages, isGenerating, activity }: ChatViewProps) {
         return <VideoMessage message={message} />;
       case 'tool_use':
         return <ToolUseBlock message={message as ToolUseMessageType} isExecuting={isGenerating} />;
+      case 'action':
+        return (
+          <ActionCard
+            message={message as ActionMessageType}
+            onExecute={onExecuteAction || (() => {})}
+            isExecuting={executingActionId === (message as ActionMessageType).instance.instanceId}
+          />
+        );
       default:
         return null;
     }
@@ -165,6 +201,20 @@ export function ChatView({ messages, isGenerating, activity }: ChatViewProps) {
         <AnimatePresence initial={false}>
           {messageGroups.map((group) => renderGroup(group))}
         </AnimatePresence>
+
+        {/* Continue button when awaiting continuation */}
+        {awaitingContinuation && !isGenerating && lastAwaitingAction && (
+          <ContinueButton
+            onClick={() => {
+              if (onContinueAction) {
+                onContinueAction(lastAwaitingAction.instance.instanceId);
+              } else if (onContinue) {
+                onContinue();
+              }
+            }}
+            label="Continue"
+          />
+        )}
 
         {/* Thinking/Activity indicator with 3-dot animation */}
         {isGenerating && (

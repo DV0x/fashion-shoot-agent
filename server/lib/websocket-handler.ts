@@ -12,10 +12,14 @@ interface WSClient extends WebSocket {
 
 // Message types from client to server
 export interface WSClientMessage {
-  type: 'subscribe' | 'unsubscribe' | 'chat' | 'continue' | 'cancel' | 'yolo' | 'ping';
+  type: 'subscribe' | 'unsubscribe' | 'chat' | 'continue' | 'cancel' | 'ping' | 'execute_action' | 'continue_action';
   sessionId?: string;
   content?: string;
   images?: string[];
+  // Action-related fields
+  instanceId?: string;
+  params?: Record<string, unknown>;
+  originalParams?: Record<string, unknown>;  // Original params from agent for diff tracking
 }
 
 // Message types from server to client
@@ -31,7 +35,6 @@ export interface WSServerMessage {
     | 'tool_use'           // Tool invocation (separate from text)
     | 'system'
     | 'progress'
-    | 'checkpoint'
     | 'complete'
     | 'cancelled'
     | 'error'
@@ -42,7 +45,13 @@ export interface WSServerMessage {
     | 'block_delta'
     | 'block_end'
     | 'message_start'
-    | 'message_stop';
+    | 'message_stop'
+    // Action-based workflow events
+    | 'action_instance'       // Action proposed by agent
+    | 'action_start'          // Action execution started
+    | 'action_progress'       // Action progress update
+    | 'action_complete'       // Action completed (success or error)
+    | 'awaiting_continuation'; // Waiting for user to continue
   // Content field for assistant_message
   content?: string;
   sessionId?: string;
@@ -50,7 +59,6 @@ export interface WSServerMessage {
   messageType?: 'thinking' | 'response';
   subtype?: string;
   data?: unknown;
-  checkpoint?: unknown;
   progress?: unknown;
   awaitingInput?: boolean;
   sessionStats?: unknown;
@@ -70,6 +78,22 @@ export interface WSServerMessage {
   toolDuration?: number;
   // message_stop event field
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
+  // Action-based workflow fields
+  instanceId?: string;
+  templateId?: string;
+  label?: string;
+  params?: Record<string, unknown>;
+  template?: unknown;  // ActionTemplate for form rendering
+  retryAttempt?: number;  // For retry progress messages
+  stage?: string;  // For progress messages
+  result?: {
+    success: boolean;
+    artifact?: string;
+    artifacts?: string[];
+    error?: string;
+    message?: string;
+    duration?: number;
+  };
 }
 
 // Events emitted by WebSocketHandler
@@ -77,9 +101,11 @@ export interface WebSocketEvents {
   chat: { clientId: string; sessionId?: string; content: string; images?: string[] };
   continue: { clientId: string; sessionId: string; content?: string };
   cancel: { clientId: string; sessionId: string };
-  yolo: { clientId: string; sessionId: string };
   subscribe: { clientId: string; sessionId: string };
   unsubscribe: { clientId: string; sessionId: string };
+  // Action-based workflow events
+  execute_action: { clientId: string; sessionId: string; instanceId: string; params: Record<string, unknown>; originalParams: Record<string, unknown> };
+  continue_action: { clientId: string; sessionId: string; instanceId: string };
 }
 
 /**
@@ -90,7 +116,7 @@ export interface WebSocketEvents {
  * - Chat message initiation
  * - Session continuation
  * - Mid-generation cancellation
- * - YOLO mode activation
+ * - Action execution and continuation (Action Instance Pattern)
  * - Heartbeat ping/pong for connection health
  */
 export class WebSocketHandler extends EventEmitter {
@@ -247,14 +273,37 @@ export class WebSocketHandler extends EventEmitter {
         });
         break;
 
-      case 'yolo':
+      case 'execute_action':
         if (!ws.sessionId && !msg.sessionId) {
-          this.sendToClient(ws, { type: 'error', error: 'sessionId required for yolo' });
+          this.sendToClient(ws, { type: 'error', error: 'sessionId required for execute_action' });
           return;
         }
-        this.emit('yolo', {
+        if (!msg.instanceId) {
+          this.sendToClient(ws, { type: 'error', error: 'instanceId required for execute_action' });
+          return;
+        }
+        this.emit('execute_action', {
           clientId: ws.clientId,
           sessionId: msg.sessionId || ws.sessionId!,
+          instanceId: msg.instanceId,
+          params: msg.params || {},
+          originalParams: msg.originalParams || msg.params || {},
+        });
+        break;
+
+      case 'continue_action':
+        if (!ws.sessionId && !msg.sessionId) {
+          this.sendToClient(ws, { type: 'error', error: 'sessionId required for continue_action' });
+          return;
+        }
+        if (!msg.instanceId) {
+          this.sendToClient(ws, { type: 'error', error: 'instanceId required for continue_action' });
+          return;
+        }
+        this.emit('continue_action', {
+          clientId: ws.clientId,
+          sessionId: msg.sessionId || ws.sessionId!,
+          instanceId: msg.instanceId,
         });
         break;
 

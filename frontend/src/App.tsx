@@ -13,6 +13,12 @@ function App() {
     resetSession,
     handleUpload,
     removeUploadedImage,
+    // Action Instance Pattern
+    awaitingContinuation,
+    executingActionId,
+    executeAction,
+    continueAction,
+    continueSession,
   } = useWebSocket();
 
   return (
@@ -21,6 +27,11 @@ function App() {
         messages={messages}
         isGenerating={isGenerating}
         activity={activity}
+        awaitingContinuation={awaitingContinuation}
+        executingActionId={executingActionId}
+        onExecuteAction={executeAction}
+        onContinueAction={continueAction}
+        onContinue={() => continueSession()}
       />
       <ChatInput
         onSend={sendMessage}

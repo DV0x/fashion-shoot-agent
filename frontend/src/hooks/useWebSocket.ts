@@ -6,6 +6,10 @@ import type {
   ImageMessage,
   VideoMessage,
   ToolUseMessage,
+  ActionMessage,
+  ActionTemplate,
+  ActionInstance,
+  ActionResult,
   SessionStats,
   PipelineState,
   Checkpoint,
@@ -40,6 +44,16 @@ interface WSServerMessage {
   toolName?: string;
   toolId?: string;
   toolInput?: Record<string, unknown>;
+  // For action events
+  instanceId?: string;
+  templateId?: string;
+  label?: string;
+  params?: Record<string, unknown>;
+  template?: ActionTemplate;
+  result?: ActionResult;
+  stage?: string;
+  message?: string;
+  retryAttempt?: number;
 }
 
 // WebSocket connection states
@@ -61,6 +75,10 @@ interface WebSocketState {
   activity: string | null;
   connectionState: WSConnectionState;
   currentBlocks: Map<number, ContentBlock>;  // Phase 7: Block-level tracking
+  // Action Instance Pattern
+  pendingAction: ActionMessage | null;  // Current action awaiting user execution
+  executingActionId: string | null;     // Instance ID of action being executed
+  awaitingContinuation: boolean;        // True after action completes, waiting for user
 }
 
 // Block accumulator for tracking streaming blocks
@@ -99,6 +117,10 @@ const initialState: WebSocketState = {
   activity: null,
   connectionState: 'disconnected',
   currentBlocks: new Map(),
+  // Action Instance Pattern
+  pendingAction: null,
+  executingActionId: null,
+  awaitingContinuation: false,
 };
 
 // Map tool names to user-friendly activity labels
@@ -629,6 +651,140 @@ export function useWebSocket() {
           break;
         }
 
+        // Action Instance Pattern events
+        case 'action_instance': {
+          // Agent proposed an action - create ActionMessage for UI
+          const instance: ActionInstance = {
+            instanceId: data.instanceId!,
+            sessionId: data.sessionId!,
+            templateId: data.templateId!,
+            label: data.label || data.templateId!,
+            params: data.params || {},
+            timestamp: data.timestamp || new Date().toISOString(),
+            status: 'pending',
+          };
+
+          const template = data.template as ActionTemplate;
+          if (!template) {
+            console.error('[WS] action_instance missing template');
+            break;
+          }
+
+          const actionMessage: ActionMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            type: 'action',
+            instance,
+            template,
+            timestamp: new Date(),
+          };
+
+          setState((prev) => ({
+            ...prev,
+            messages: [...prev.messages, actionMessage],
+            pendingAction: actionMessage,
+            awaitingContinuation: false,
+          }));
+          break;
+        }
+
+        case 'action_start': {
+          // Action execution started
+          const instanceId = data.instanceId;
+          setState((prev) => ({
+            ...prev,
+            executingActionId: instanceId || null,
+            activity: `Executing ${data.label || 'action'}...`,
+            messages: prev.messages.map((msg) => {
+              if (msg.type === 'action' && msg.instance.instanceId === instanceId) {
+                return {
+                  ...msg,
+                  instance: { ...msg.instance, status: 'executing' as const },
+                  isExecuting: true,
+                };
+              }
+              return msg;
+            }),
+          }));
+          break;
+        }
+
+        case 'action_progress': {
+          // Progress update during execution
+          const progressMsg = data.message || data.stage;
+          if (progressMsg) {
+            setActivity(String(progressMsg));
+          }
+          break;
+        }
+
+        case 'action_complete': {
+          // Action finished (success or error)
+          const instanceId = data.instanceId;
+          const result = data.result as ActionResult;
+
+          setState((prev) => ({
+            ...prev,
+            executingActionId: null,
+            activity: null,
+            messages: prev.messages.map((msg) => {
+              if (msg.type === 'action' && msg.instance.instanceId === instanceId) {
+                return {
+                  ...msg,
+                  instance: {
+                    ...msg.instance,
+                    status: result?.success ? 'completed' as const : 'error' as const,
+                  },
+                  result,
+                  isExecuting: false,
+                };
+              }
+              return msg;
+            }),
+          }));
+
+          // If success and has artifact, add image/video message
+          if (result?.success) {
+            const cacheBuster = `?t=${Date.now()}`;
+            if (result.artifact) {
+              const isVideo = result.artifact.endsWith('.mp4');
+              addMessage({
+                role: 'assistant',
+                type: isVideo ? 'video' : 'image',
+                src: `/${result.artifact}${cacheBuster}`,
+              } as any);
+            }
+            if (result.artifacts && result.artifacts.length > 0) {
+              result.artifacts.forEach((artifact) => {
+                const isVideo = artifact.endsWith('.mp4');
+                addMessage({
+                  role: 'assistant',
+                  type: isVideo ? 'video' : 'image',
+                  src: `/${artifact}${cacheBuster}`,
+                } as any);
+              });
+            }
+          }
+          break;
+        }
+
+        case 'awaiting_continuation': {
+          // Action completed, waiting for user to continue
+          const instanceId = data.instanceId;
+          setState((prev) => ({
+            ...prev,
+            awaitingContinuation: true,
+            pendingAction: null,
+            messages: prev.messages.map((msg) => {
+              if (msg.type === 'action' && msg.instance.instanceId === instanceId) {
+                return { ...msg, awaitingContinuation: true };
+              }
+              return msg;
+            }),
+          }));
+          break;
+        }
+
         case 'complete': {
           const checkpoint = data.checkpoint as Checkpoint | undefined;
 
@@ -689,6 +845,8 @@ export function useWebSocket() {
               checkpoint: checkpoint || null,
               awaitingInput: data.awaitingInput || false,
               uploadedImages: prev.sessionId ? prev.uploadedImages : [],
+              // Reset action state on complete (unless awaiting continuation)
+              executingActionId: null,
             };
           });
 
@@ -931,6 +1089,75 @@ export function useWebSocket() {
     continueSession('continue');
   }, [continueSession]);
 
+  // Execute a proposed action
+  const executeAction = useCallback(
+    (instanceId: string, params: Record<string, unknown>, originalParams: Record<string, unknown>) => {
+      if (!state.sessionId || wsRef.current?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      console.log('[WS] Executing action:', instanceId);
+      sendWS({
+        type: 'execute_action',
+        sessionId: state.sessionId,
+        instanceId,
+        params,
+        originalParams,
+      });
+    },
+    [state.sessionId, sendWS]
+  );
+
+  // Continue after action completion (alternative to continueSession)
+  const continueAction = useCallback(
+    (instanceId: string) => {
+      if (!state.sessionId || wsRef.current?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      console.log('[WS] Continuing after action:', instanceId);
+
+      // Clear awaiting continuation state
+      setState((prev) => ({
+        ...prev,
+        awaitingContinuation: false,
+      }));
+
+      sendWS({
+        type: 'continue_action',
+        sessionId: state.sessionId,
+        instanceId,
+      });
+
+      // Set up streaming state for agent response
+      const thinkingMessage: ThinkingMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        type: 'thinking',
+        content: '',
+        blocks: [],
+        isStreaming: true,
+        timestamp: new Date(),
+      };
+
+      thinkingMessageIdRef.current = thinkingMessage.id;
+      streamingMessageIdRef.current = thinkingMessage.id;
+      accumulatedTextRef.current = '';
+      thinkingHistoryRef.current = { segments: [] };
+
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, thinkingMessage],
+        isGenerating: true,
+        streamingText: '',
+        streamingMessageId: thinkingMessage.id,
+        error: null,
+        activity: 'Continuing...',
+      }));
+    },
+    [state.sessionId, sendWS]
+  );
+
   // Cancel active generation
   const cancelGeneration = useCallback(() => {
     if (!state.sessionId || !state.isGenerating) {
@@ -1007,6 +1234,7 @@ export function useWebSocket() {
     setState((prev) => ({
       ...initialState,
       connectionState: prev.connectionState, // Keep connection state
+      // Action state is reset via initialState
     }));
   }, []);
 
@@ -1041,6 +1269,9 @@ export function useWebSocket() {
     handleUpload,
     removeUploadedImage,
     updatePresets,
+    // Action Instance Pattern
+    executeAction,
+    continueAction,
     // Connection management
     connect,
     disconnect,

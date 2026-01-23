@@ -4,13 +4,34 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.2 |
+| Version | 2.0 |
 | Created | January 20, 2026 |
-| Updated | January 21, 2026 |
-| Status | Planning |
+| Updated | January 22, 2026 |
+| Status | Approved for Implementation |
 | Author | Engineering Team |
 
 > **Reference:** This document is informed by the [Email Agent Architecture](./EMAIL_AGENT_ARCHITECTURE_REFERENCE.md) which implements a similar action instance pattern.
+
+---
+
+## Key Decisions Summary
+
+The following decisions were finalized during the planning interview:
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **YOLO Mode** | Remove completely | All generations require user approval via ActionCards |
+| **Action Delivery** | Hybrid: Skill-based tool + Form UI | Structured WebSocket (no text parsing) + editable form cards |
+| **ProposeAction Implementation** | New standalone skill | `agent/.claude/skills/action-proposer/` |
+| **Parameter Display** | All template parameters | Full form with agent values as defaults |
+| **User Modifications** | Notify agent of changes | Agent sees what user changed before execution |
+| **Continuation Flow** | Wait for user | After action completes, user must click Continue or type |
+| **Error Handling** | Auto-retry once | Then show error for manual retry |
+| **Artifact Detection** | Remove old system | Only actions for generations (no PostToolUse detection) |
+| **Checkpoint System** | Remove entirely | Clean slate - all through action system |
+| **Multiple Actions** | One at a time (MVP) | Design system to support multiple later |
+| **Batch Operations** | Single action with progress | generate_all_clips shows 1/5, 2/5... |
+| **Git Strategy** | Incremental commits | Commit after each phase |
 
 ---
 
@@ -259,33 +280,73 @@ Future builds on this:
 
 ### Functional Requirements
 
-#### FR-1: Agent Proposes Actions (Not Executes)
+#### FR-1: Two-Step Creative Flow (Discuss → Propose)
 
-**Description:** Agent outputs action proposals in a structured format instead of executing scripts directly.
+**Description:** Agent first discusses creative options with user, THEN proposes action with full prompt embedded.
+
+**Two-Step Flow:**
+1. **Discuss**: Agent suggests creative directions, user chooses
+2. **Propose**: Agent creates action with complete prompt based on user's choice
 
 **Acceptance Criteria:**
-- [ ] Agent response includes `action` code block with JSON
-- [ ] Action JSON contains: templateId, label, params
-- [ ] Agent provides creative reasoning before proposing action
+- [ ] Agent discusses creative options BEFORE proposing any action
+- [ ] User selects direction or provides feedback
+- [ ] Agent then calls `action-proposer` skill with full prompt embedded
+- [ ] Full prompt is visible and editable in ActionCard
 - [ ] Agent does NOT execute Bash commands for generation scripts
 
-**Example:**
-```markdown
-Based on your streetwear vision, I'm going with an urban industrial
-look - the raw textures will complement the edgy aesthetic.
+**Example Agent Flow:**
 
-```action
-{
-  "templateId": "generate_hero",
-  "label": "Generate Hero Shot",
-  "params": {
-    "pose": "street-walk",
-    "background": "industrial",
-    "aspectRatio": "9:16"
-  }
-}
 ```
+STEP 1: CREATIVE DISCUSSION (No action yet)
+═══════════════════════════════════════════
+
+User: "Create a Star Wars themed shoot"
+
+Agent: "For a Star Wars theme, I have a few directions:
+
+        🔴 Sith Lord - Deep shadows, red accent lighting, commanding presence
+        🔵 Jedi Serenity - Soft ethereal glow, peaceful stance, earth tones
+        🟤 Bounty Hunter - Gritty industrial, weathered textures, moody greens
+
+        Which direction resonates? Or describe something different!"
+
+User: "Sith Lord looks perfect"
+
+
+STEP 2: ACTION PROPOSAL (Full prompt embedded)
+═══════════════════════════════════════════════
+
+Agent: "Great choice! Here's the Sith Lord hero shot:"
+
+Agent calls:  Skill("action-proposer", {
+                templateId: "generate_hero",
+                label: "Generate Sith Lord Hero",
+                params: {
+                  prompt: "Full-body fashion photograph, powerful Sith Lord
+                          aesthetic, editorial-drama pose, studio-black
+                          background, deep shadows with red accent lighting,
+                          dramatic tension, commanding presence, Fuji Velvia
+                          film treatment, slight overexposure, film grain,
+                          oversaturated colors",
+                  aspectRatio: "3:2"
+                }
+              })
+
+Server sends: { type: 'action_instance', ... }
+
+Frontend:     Renders ActionCard with:
+              - Full prompt (editable text area)
+              - Aspect ratio dropdown
+              - Generate button
 ```
+
+**Why This Flow:**
+- AI creativity happens in conversation (natural, iterative)
+- User makes informed creative choices
+- Full prompt visible = full transparency
+- User can tweak prompt before execution
+- No AI needed at execution time (just runs the prompt)
 
 #### FR-2: Action Card UI
 
@@ -304,25 +365,31 @@ look - the raw textures will complement the edgy aesthetic.
 **Wireframe:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 🎬 Generate Hero Shot                                           │
+│ 🎬 Generate Sith Lord Hero                                      │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Pose         [street-walk         ▼]                          │
-│               ○ editorial-drama                                 │
-│               ● street-walk                                     │
-│               ○ relaxed-natural                                 │
+│  Prompt                                                         │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Full-body fashion photograph, powerful Sith Lord        │   │
+│  │ aesthetic, editorial-drama pose, studio-black           │   │
+│  │ background, deep shadows with red accent lighting,      │   │
+│  │ dramatic tension, commanding presence, Fuji Velvia      │   │
+│  │ film treatment, slight overexposure, film grain...      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│  ↑ Editable - modify the prompt before generating              │
 │                                                                 │
-│  Background   [industrial          ▼]                          │
-│                                                                 │
-│  Aspect Ratio [9:16 TikTok         ▼]                          │
-│                                                                 │
-│  Style Notes  [________________________________]                │
-│               Additional style instructions                     │
+│  Aspect Ratio [3:2 Standard        ▼]                          │
 │                                                                 │
 │  [        Generate        ]  [ Reset ]                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** The full prompt is visible and editable. User can:
+- Tweak wording ("commanding" → "menacing")
+- Add details ("add cape flowing in wind")
+- Remove elements they don't want
+- Or accept agent's suggestion as-is
 
 #### FR-3: Action Execution
 
@@ -336,30 +403,43 @@ look - the raw textures will complement the edgy aesthetic.
 - [ ] Errors displayed gracefully
 - [ ] Agent receives result and can respond
 
-#### FR-4: Agent Response to Results
+#### FR-4: Agent Response to Results (User-Triggered)
 
-**Description:** After action executes, agent sees result and continues conversation.
+**Description:** After action executes, result is displayed. Agent responds ONLY when user triggers continuation.
 
 **Acceptance Criteria:**
-- [ ] Agent receives notification of action completion
-- [ ] Agent can see which artifact was generated
-- [ ] Agent provides commentary on result
-- [ ] Agent proposes next action in pipeline
-- [ ] Conversation flows naturally
+- [ ] Action result (artifact) displayed as new message in chat
+- [ ] ActionCard shows 'completed' status
+- [ ] Agent is notified of: result, artifact path, user's parameter changes
+- [ ] Agent does NOT auto-respond - waits for user action
+- [ ] User must click "Continue" or type message to trigger agent response
+- [ ] Agent then provides commentary and proposes next action
 
 **Example Flow:**
 ```
+[User clicks Generate on ActionCard]
 [Action executes, hero.png generated]
+[ActionCard shows "Completed ✓"]
+[New ImageMessage appears showing hero.png]
+
+--- USER MUST ACT ---
+
+[User clicks "Continue" button OR types "looks good"]
 
 Agent: "The industrial backdrop adds great texture! The 9:16 format
-        is perfect for TikTok. Notice how the lighting catches the
-        fabric details.
+        is perfect for TikTok. I noticed you changed the background
+        from studio-black to industrial - great choice for streetwear!
 
-        Ready for the contact sheet? I'll generate 6 angles with
-        the same urban energy:"
+        Ready for the contact sheet?"
 
-        [Action: Generate Contact Sheet]
+        [Calls action-proposer skill for Generate Contact Sheet]
 ```
+
+**Rationale for Wait-for-User:**
+- User has full control over pacing
+- Can review artifact before proceeding
+- Can type feedback/changes instead of continuing
+- Prevents runaway agent responses
 
 #### FR-5: Full Pipeline Support
 
@@ -368,13 +448,15 @@ Agent: "The industrial backdrop adds great texture! The 9:16 format
 **Actions Required:**
 | Action | Stage | Key Parameters |
 |--------|-------|----------------|
-| `generate_hero` | hero | pose, background, aspectRatio, styleNotes |
-| `generate_contact_sheet` | contact-sheet | angleStyle, styleNotes |
+| `generate_hero` | hero | **prompt** (full text), aspectRatio |
+| `generate_contact_sheet` | contact-sheet | **prompt** (full text), aspectRatio |
 | `extract_frames` | frames | cropMethod |
 | `resize_frames` | resize | targetRatio, fitMode |
-| `generate_video_clip` | clips | clipNumber, motionStyle, duration |
-| `generate_all_clips` | clips | motionStyle, duration |
+| `generate_video_clip` | clips | clipNumber, **motionPrompt**, duration |
+| `generate_all_clips` | clips | **motionPrompt**, duration |
 | `stitch_final` | final | includeLoop, easingCurve, clipDuration |
+
+**Note:** Generation actions (hero, contact-sheet, clips) include the full prompt as an editable parameter. Agent crafts the prompt based on creative discussion, user can modify before execution.
 
 #### FR-6: Modification Actions
 
@@ -387,6 +469,39 @@ Agent: "The industrial backdrop adds great texture! The 9:16 format
 - [ ] `regenerate_clip` available after clips generated
 - [ ] Modified assets replace previous versions
 
+#### FR-7: User-Controlled Continuation
+
+**Description:** User controls when agent responds after action completion.
+
+**Acceptance Criteria:**
+- [ ] After action completes, "Continue" button appears
+- [ ] Agent does NOT auto-respond - waits for user
+- [ ] User can click "Continue" to trigger agent response
+- [ ] User can type message instead (counts as continuation)
+- [ ] Agent receives: result, artifact, user's parameter changes
+- [ ] Agent then comments and proposes next action
+
+**Wireframe:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ After action completes:                                         │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ 🎬 Generate Hero Shot                    Completed ✓        │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │                    [hero.png image]                         │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│                    [ Continue → ]                               │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Type a message or click Continue...               [Send]    │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### Non-Functional Requirements
 
 #### NFR-1: Response Time
@@ -397,9 +512,11 @@ Agent: "The industrial backdrop adds great texture! The 9:16 format
 
 #### NFR-2: Error Handling
 
+- Auto-retry once for transient failures (API timeouts, network errors)
+- If retry fails, show error in ActionCard with manual "Retry" button
 - All errors shown in UI (not silent failures)
-- Agent notified of errors so it can suggest fixes
-- Retry option available for transient failures
+- Agent notified of errors when user triggers continuation
+- Error includes: code, message, whether it was auto-retried
 
 #### NFR-3: State Management
 
@@ -445,11 +562,11 @@ Agent: "The industrial backdrop adds great texture! The 9:16 format
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
+### Data Flow (Hybrid Approach)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          DATA FLOW                                   │
+│                    DATA FLOW (SKILL-BASED)                           │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  1. USER INPUT                                                      │
@@ -458,54 +575,84 @@ Agent: "The industrial backdrop adds great texture! The 9:16 format
 │  2. AGENT REASONING                                                 │
 │     └── Analyzes request, selects presets, formulates approach     │
 │                    ↓                                                 │
-│  3. AGENT RESPONSE (with Action)                                    │
-│     └── "For streetwear, I suggest..."                             │
-│         ```action { "templateId": "generate_hero", ... } ```       │
+│  3. AGENT RESPONSE + SKILL CALL                                     │
+│     └── Agent writes: "For streetwear, I suggest..."               │
+│     └── Agent calls: Skill("action-proposer", args)                │
+│         OR uses ProposeAction tool directly                         │
 │                    ↓                                                 │
-│  4. SERVER-SIDE PARSING                                             │
-│     └── Detects action block, extracts JSON                        │
-│     └── Strips action blocks from text                             │
-│     └── Registers ActionInstance in ActionsManager                 │
-│     └── Sends clean text + actions array to frontend               │
+│  4. SKILL/TOOL EXECUTION (Server-side)                              │
+│     └── Creates ActionInstance with UUID                           │
+│     └── Registers in ActionsManager                                │
+│     └── Sends via WebSocket: { type: 'action_instance', ... }      │
 │                    ↓                                                 │
 │  5. FRONTEND RENDERING                                              │
-│     └── Displays assistant text (actions stripped)                 │
-│     └── Renders ActionCard with editable params                    │
+│     └── Displays assistant text                                    │
+│     └── Renders ActionCard with ALL template params                │
+│     └── Agent's values shown as defaults                           │
 │                    ↓                                                 │
 │  6. USER INTERACTION                                                │
-│     └── Reviews params, modifies if desired                        │
+│     └── Reviews ALL params in form card                            │
+│     └── Modifies if desired (dropdowns, text fields)               │
 │     └── Clicks "Generate"                                          │
 │                    ↓                                                 │
 │  7. EXECUTE_ACTION MESSAGE                                          │
 │     └── { type: 'execute_action', instanceId, params }             │
+│     └── Includes diff of what user changed                         │
 │                    ↓                                                 │
 │  8. SERVER EXECUTION                                                │
+│     └── Auto-retry once on transient failure                       │
 │     └── Looks up action template                                   │
-│     └── Runs executor with params                                  │
+│     └── Runs executor with user's final params                     │
 │     └── Broadcasts progress/result                                 │
 │                    ↓                                                 │
 │  9. RESULT DISPLAY                                                  │
-│     └── Artifact shown in chat                                     │
-│     └── Action card removed/completed                              │
+│     └── ActionCard shows 'completed' status                        │
+│     └── NEW artifact message appears in chat                       │
+│     └── Agent notified of result + user's param changes            │
 │                    ↓                                                 │
-│  10. AGENT CONTINUATION                                             │
-│      └── Agent sees result, comments, proposes next action         │
+│  10. WAIT FOR USER                                                  │
+│      └── User clicks "Continue" or types to proceed                │
+│      └── Agent then comments and proposes next action              │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Static vs Dynamic Templates
+**Key Differences from Text-Parsing Approach:**
+- No regex parsing of response text - actions created via explicit tool/skill call
+- More reliable - structured data, not text extraction
+- Agent text and action are separate concerns
+- Frontend receives clean, pre-validated action instances
 
-Unlike the email-agent (where the agent creates new handler files at runtime), fashion-shoot-agent uses **static templates** pre-defined in `server/actions/`:
+### Hybrid Approach: Email-Agent Pattern + Form UI
+
+This implementation combines the best of both approaches:
+
+**From Email-Agent (adopted):**
+- Skill-based action proposal (not text parsing)
+- Structured WebSocket delivery
+- Clean separation: agent text is conversational, action is structured data
+- Reliable - no regex parsing of markdown
+
+**From MVP Vision (adopted):**
+- Form card UI with editable parameters
+- User can modify any parameter before executing
+- Full creative control over pipeline settings
+
+**Differences from Email-Agent:**
 
 | Aspect | Email Agent | Fashion-Shoot Agent |
 |--------|-------------|---------------------|
-| Template creation | Agent writes .ts files | Pre-coded at build time |
+| Template creation | Agent writes .ts files at runtime | Pre-coded at build time |
 | Hot reload | Yes (file watcher) | No (restart required) |
 | Template count | Unlimited | Fixed (7 pipeline actions) |
-| Complexity | Higher | Lower |
+| UI Component | Simple button | Form card with all params |
+| User editing | None - click only | Full parameter editing |
+| Continuation | Auto-continues | Waits for user |
 
-This simplification is appropriate because the fashion pipeline has fixed stages that don't need runtime customization.
+This simplification is appropriate because:
+1. Fashion pipeline has fixed stages (no runtime template creation needed)
+2. Creative work benefits from parameter tweaking (form UI > button)
+3. User pacing matters for reviewing visual outputs (wait for Continue)
 
 ### Key Architectural Decisions
 
@@ -580,47 +727,54 @@ hooks: {
 | `generate-video.ts` | `generate_video_clip`, `generate_all_clips` |
 | `stitch-videos-eased.ts` | `stitch_final` |
 
-#### Decision 3: Server-Side Action Parsing
+#### Decision 3: Skill-Based Action Proposal (Hybrid Approach)
 
-**Choice:** Parse action blocks in the WebSocket handler before sending to frontend.
+**Choice:** Agent proposes actions via a dedicated `action-proposer` skill, not by embedding JSON in response text.
 
 **Rationale:**
-- Single source of truth for action parsing logic
-- Frontend receives clean, pre-processed data
-- Server can validate actions against known templates
-- Easier to maintain and debug
-- Supports future features like action validation, rate limiting
+- No fragile text parsing (regex on markdown code blocks)
+- Explicit, structured action creation
+- Clean separation: agent text is conversational, action is structured data
+- More reliable than parsing - tool calls are validated by SDK
+- Matches email-agent's proven pattern
 
 **Implementation Flow:**
 
 ```
-Agent response text
+Agent reasoning + Skill call
        ↓
 ┌──────────────────────────────────────────────────────┐
-│ WebSocket Handler (server)                           │
+│ Agent calls Skill("action-proposer") or             │
+│ uses ProposeAction tool                              │
 │                                                      │
-│  1. parseActionsFromResponse(text, sessionId)        │
-│     → Returns ActionInstance[]                       │
+│  1. Skill/tool receives:                            │
+│     { templateId, label, params }                   │
 │                                                      │
-│  2. For each instance:                               │
+│  2. Server validates against known templates         │
+│                                                      │
+│  3. Creates ActionInstance with UUID                 │
 │     actionsManager.registerInstance(instance)        │
 │                                                      │
-│  3. stripActionBlocks(text)                          │
-│     → Returns clean text for display                 │
-│                                                      │
-│  4. Send to frontend:                                │
-│     { type: 'assistant_message',                     │
-│       content: cleanText,                            │
-│       actions: instances }                           │
+│  4. Broadcasts via WebSocket:                        │
+│     { type: 'action_instance',                       │
+│       instance: { instanceId, templateId, ... } }   │
 └──────────────────────────────────────────────────────┘
        ↓
-Frontend receives ready-to-render data
+Frontend receives structured action instance
+       ↓
+┌──────────────────────────────────────────────────────┐
+│ Frontend renders ActionCard with:                    │
+│ - ALL template parameters as form fields             │
+│ - Agent's suggested values as defaults               │
+│ - User can modify any parameter                      │
+└──────────────────────────────────────────────────────┘
 ```
 
 **Benefits:**
-- Frontend just renders what it receives
-- No parsing logic duplication
-- Server has full control over action lifecycle
+- No regex parsing, no text manipulation
+- Actions are explicitly created, never inferred
+- Frontend receives validated, complete action data
+- Agent's conversational text stays clean
 
 ### Key Components
 
@@ -723,25 +877,34 @@ Understanding when instances are created, stored, and cleaned up:
 │                      INSTANCE LIFECYCLE                              │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  1. CREATION                                                        │
-│     └── Agent outputs ```action { ... } ``` block                   │
-│     └── Server parses response, extracts JSON                       │
-│     └── Server creates ActionInstance with unique instanceId        │
+│  1. CREATION (via Skill)                                            │
+│     └── Agent calls action-proposer skill                           │
+│     └── Skill validates templateId against known templates          │
+│     └── Skill creates ActionInstance with unique UUID               │
+│     └── Server broadcasts { type: 'action_instance', ... }          │
 │                                                                      │
 │  2. STORAGE                                                         │
 │     └── actionsManager.instances Map (keyed by instanceId)          │
-│     └── Also attached to the assistant message for frontend         │
+│     └── Template schema sent with instance for form rendering       │
 │                                                                      │
 │  3. EXECUTION                                                       │
+│     └── User reviews form, modifies params if desired               │
 │     └── User clicks Generate → execute_action message sent          │
-│     └── Server looks up instance by instanceId                      │
-│     └── Server looks up template by instance.templateId             │
-│     └── Server calls template.execute(instance.params, context)     │
+│     └── Server auto-retries once on transient failure               │
+│     └── Server looks up instance and template                       │
+│     └── Server calls template.execute(userParams, context)          │
+│     └── Server stores user's param changes for agent notification   │
 │                                                                      │
-│  4. CLEANUP                                                         │
-│     └── On successful execution: instance removed from Map          │
+│  4. WAITING (User-Controlled)                                       │
+│     └── Result displayed, ActionCard shows "Completed"              │
+│     └── Server sends 'awaiting_continuation' signal                 │
+│     └── Agent does NOT auto-respond                                 │
+│     └── User clicks Continue or types message                       │
+│                                                                      │
+│  5. CLEANUP                                                         │
+│     └── On user continuation: instance removed, agent notified      │
 │     └── On session end: all session instances cleared               │
-│     └── On error: instance kept (allows retry)                      │
+│     └── On error after auto-retry: instance kept (manual retry)     │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -780,33 +943,45 @@ class ActionsManager {
 ### File Structure
 
 ```
+agent/
+├── .claude/
+│   └── skills/
+│       └── action-proposer/         # (New) Action proposal skill
+│           ├── SKILL.md             # Skill definition
+│           └── propose-action.ts    # Creates ActionInstance
+
 server/
 ├── actions/
 │   ├── types.ts                    # Type definitions
 │   ├── index.ts                    # Action manager & registry
-│   ├── generate-hero.ts            # Hero shot action
-│   ├── generate-contact-sheet.ts   # Contact sheet action
-│   ├── extract-frames.ts           # Frame extraction action
-│   ├── resize-frames.ts            # Frame resize action
-│   ├── generate-video-clip.ts      # Single clip action
-│   ├── generate-all-clips.ts       # Batch clips action
-│   └── stitch-final.ts             # Final video action
+│   ├── generate-hero.ts            # Hero shot action executor
+│   ├── generate-contact-sheet.ts   # Contact sheet action executor
+│   ├── extract-frames.ts           # Frame extraction action executor
+│   ├── resize-frames.ts            # Frame resize action executor
+│   ├── generate-video-clip.ts      # Single clip action executor
+│   ├── generate-all-clips.ts       # Batch clips action executor
+│   └── stitch-final.ts             # Final video action executor
 ├── lib/
-│   ├── ai-client.ts                # (Modified) Remove forced stopping
-│   ├── orchestrator-prompt.ts      # (Rewritten) Action proposal prompt
-│   └── action-parser.ts            # Parse actions from responses
-└── sdk-server.ts                   # (Modified) Add execute_action handler
+│   ├── ai-client.ts                # (Modified) Add PreToolUse block, remove YOLO
+│   ├── orchestrator-prompt.ts      # (Modified) Add skill instructions, remove YOLO
+│   └── session-manager.ts          # (Modified) Remove checkpoint state
+└── sdk-server.ts                   # (Modified) Add execute_action handler, remove YOLO
 
 frontend/
 ├── components/
 │   └── chat/
-│       ├── ActionCard.tsx          # (New) Action UI component
+│       ├── ActionCard.tsx          # (New) Form-based action UI
+│       ├── ContinueButton.tsx      # (New) Trigger agent continuation
 │       ├── ChatView.tsx            # (Modified) Render actions
 │       └── ...
 ├── hooks/
-│   └── useWebSocket.ts             # (Modified) Action handling
+│   └── useWebSocket.ts             # (Modified) Action handling, remove checkpoint
 └── lib/
     └── types.ts                    # (Modified) Action types
+
+Files to REMOVE:
+├── server/lib/action-parser.ts     # Not needed - using skill instead
+└── Any checkpoint-related code
 ```
 
 ---
@@ -853,170 +1028,154 @@ frontend/
 
 **Effort:** 2 hours
 
-### Phase 2: Prompt & Parsing (Day 1-2)
+### Phase 2: Skill & Prompt (Day 1-2)
 
-#### Task 2.1: Rewrite Orchestrator Prompt
+#### Task 2.1: Create action-proposer Skill
 
-**File:** `server/lib/orchestrator-prompt.ts`
+**Directory:** `agent/.claude/skills/action-proposer/`
+
+**Files to Create:**
+- `SKILL.md` - Skill definition and usage instructions
+- `propose-action.ts` - Script that creates and broadcasts ActionInstance
 
 **Deliverable:**
-- New prompt focused on proposing actions
-- Clear instructions for action block format
-- Examples of good action proposals
-- Guidance on conversational flow
+- Skill that agent can invoke to propose actions
+- Validates templateId against known templates
+- Creates ActionInstance with UUID
+- Broadcasts to frontend via WebSocket
+- Returns confirmation to agent
 
-**Key Prompt Additions:**
+**SKILL.md Content:**
 
 ```markdown
-## Proposing Actions
+# Action Proposer Skill
 
-When you're ready to generate content, propose an action instead of executing directly.
-The user will see your action as an interactive card where they can modify parameters
-before clicking "Generate".
+Use this skill to propose actions to the user instead of executing scripts directly.
 
-**Format your proposal as:**
-1. Explain your creative reasoning (2-3 sentences)
-2. Output the action in a code block:
+## Usage
 
-\`\`\`action
-{
-  "templateId": "generate_hero",
-  "label": "Generate Hero Shot",
-  "params": {
-    "pose": "editorial-drama",
-    "background": "studio-black",
-    "aspectRatio": "3:2",
-    "styleNotes": "Deep shadows, dramatic lighting"
-  }
-}
+When you want to generate content (images, videos, etc.), call this skill instead of
+running Bash commands. The user will see an interactive card where they can review
+and modify parameters before clicking "Generate".
+
+## Command
+
+\`\`\`bash
+npx ts-node propose-action.ts --templateId <id> --label "<label>" --params '<json>'
 \`\`\`
 
-**Available Actions:**
-| templateId | Description | Key Parameters |
-|------------|-------------|----------------|
-| generate_hero | Full-body hero shot | pose, background, aspectRatio |
-| generate_contact_sheet | 2×3 grid of 6 angles | angleStyle, styleNotes |
-| extract_frames | Extract frames from grid | cropMethod |
-| resize_frames | Resize for video | targetRatio, fitMode |
-| generate_video_clip | Single transition video | clipNumber, motionStyle |
-| generate_all_clips | All 5 transition clips | motionStyle, duration |
-| stitch_final | Final stitched video | includeLoop, easingCurve |
+## Available Templates
 
-**IMPORTANT:**
-- Do NOT run Bash commands for generation scripts
-- Always propose actions and let the user control execution
-- After an action completes, comment on the result before proposing the next action
-- If the user asks to modify something, propose the appropriate action
+| templateId | Description |
+|------------|-------------|
+| generate_hero | Full-body hero shot |
+| generate_contact_sheet | 2×3 grid of 6 angles |
+| extract_frames | Extract frames from contact sheet |
+| resize_frames | Resize frames for video |
+| generate_video_clip | Single transition video |
+| generate_all_clips | All 5 transition clips |
+| stitch_final | Final stitched video |
 
-**Example Good Response:**
+## Example
 
-"For your Star Wars theme, I'm envisioning a powerful Sith Lord aesthetic - deep
-shadows with dramatic edge lighting to create that classic dark side tension.
-The editorial-drama pose will give you that commanding Vader presence.
-
-\`\`\`action
-{
-  "templateId": "generate_hero",
-  "label": "Generate Sith Lord Hero",
-  "params": {
-    "pose": "editorial-drama",
-    "background": "studio-black",
-    "aspectRatio": "3:2",
-    "styleNotes": "Deep shadows, red accent lighting, dramatic tension"
-  }
-}
+\`\`\`bash
+npx ts-node propose-action.ts \
+  --templateId generate_hero \
+  --label "Generate Moody Hero Shot" \
+  --params '{"pose": "editorial-drama", "background": "studio-black", "styleNotes": "Deep shadows"}'
 \`\`\`
 
-Feel free to adjust the settings above - once you're happy, click Generate!"
+## IMPORTANT
+
+- ALWAYS explain your creative reasoning BEFORE calling this skill
+- NEVER run generation scripts (generate-image, generate-video, etc.) directly
+- The user controls when actions execute - you just propose
 ```
 
 **Effort:** 2 hours
 
-#### Task 2.2: Action Parser
+#### Task 2.2: Update Orchestrator Prompt
 
-**File:** `server/lib/action-parser.ts`
+**File:** `server/lib/orchestrator-prompt.ts`
 
 **Deliverable:**
-- `parseActionsFromResponse(text)` function
-- Extract action JSON from markdown code block
-- Validate against known templates
-- Handle malformed actions gracefully
-- `stripActionBlocks(text)` function to clean displayed text
+- Keep existing creative director persona and preset matching
+- Add two-step creative flow instructions
+- Add instructions for using action-proposer skill with full prompt
+- Remove any YOLO/autonomous mode instructions
+- Add guidance on waiting for user continuation
 
-**Implementation:**
+**Key Additions:**
 
-```typescript
-// server/lib/action-parser.ts
+```markdown
+## Two-Step Creative Flow (MANDATORY)
 
-import crypto from 'crypto';
-import { ActionInstance } from '../actions/types';
-import { actionsManager } from '../actions';
+You MUST follow this two-step flow for all generation tasks:
 
-/**
- * Parse action blocks from agent response text.
- * Looks for ```action { ... } ``` markdown code blocks.
- */
-export function parseActionsFromResponse(
-  text: string,
-  sessionId: string
-): ActionInstance[] {
-  const actionBlockRegex = /```action\s*([\s\S]*?)```/g;
-  const instances: ActionInstance[] = [];
+### Step 1: Discuss Creative Direction
+Before proposing any action, have a conversation about creative options:
+- Suggest 2-3 creative directions based on user's request
+- Explain the aesthetic/mood of each option
+- Ask user to choose or provide feedback
+- Do NOT propose an action yet
 
-  let match;
-  while ((match = actionBlockRegex.exec(text)) !== null) {
-    try {
-      const json = JSON.parse(match[1].trim());
+### Step 2: Propose Action with Full Prompt
+Once user chooses a direction:
+- Craft the complete prompt based on their choice
+- Call the action-proposer skill with the full prompt embedded
+- The user will see and can edit the prompt before generating
 
-      // Validate template exists
-      const template = actionsManager.getTemplate(json.templateId);
-      if (!template) {
-        console.warn(`Unknown action template: ${json.templateId}`);
-        continue;
-      }
+**Example Flow:**
 
-      instances.push({
-        instanceId: crypto.randomUUID(),
-        sessionId,
-        templateId: json.templateId,
-        label: json.label || template.name,
-        params: json.params || {},
-        timestamp: new Date()
-      });
-    } catch (e) {
-      console.error('Failed to parse action block:', e);
-    }
-  }
+User: "Create a Star Wars themed shoot"
 
-  return instances;
-}
+You (Step 1 - Discuss):
+"For a Star Wars theme, I have a few directions:
 
-/**
- * Remove action blocks from text for display purposes.
- * The JSON blocks are replaced with empty string so users see clean text.
- */
-export function stripActionBlocks(text: string): string {
-  return text.replace(/```action\s*[\s\S]*?```/g, '').trim();
-}
+🔴 **Sith Lord** - Deep shadows, red accent lighting, commanding presence
+🔵 **Jedi Serenity** - Soft ethereal glow, peaceful stance, earth tones
+🟤 **Bounty Hunter** - Gritty industrial, weathered textures, moody greens
 
-/**
- * Check if text contains any action blocks.
- */
-export function hasActionBlocks(text: string): boolean {
-  return /```action\s*[\s\S]*?```/.test(text);
-}
+Which direction resonates with you?"
+
+User: "Sith Lord"
+
+You (Step 2 - Propose):
+"Perfect! Here's the Sith Lord hero shot:"
+[Call action-proposer with full prompt]
+
+**IMPORTANT:**
+- NEVER propose an action without discussing creative direction first
+- ALWAYS include the complete prompt in the action params
+- WAIT for user after action completes - do not auto-continue
 ```
 
-**Effort:** 1 hour
+**Effort:** 1.5 hours
 
-#### Task 2.3: Update ai-client.ts
+#### Task 2.3: Cleanup ai-client.ts
 
 **File:** `server/lib/ai-client.ts`
 
 **Deliverable:**
-- Remove `{ continue: false }` from PostToolUse
-- Keep progress event emission for artifacts
-- Clean up checkpoint-related code
+- Remove YOLO/autonomous mode injection
+- Remove PostToolUse artifact detection (actions handle this now)
+- Remove checkpoint-related code
+- Add PreToolUse hook to block direct generation script execution
+- Keep basic progress event emission
+
+**Effort:** 1.5 hours
+
+#### Task 2.4: Remove Checkpoint System
+
+**Files:**
+- `server/lib/session-manager.ts` - Remove checkpoint state
+- `frontend/src/hooks/useWebSocket.ts` - Remove checkpoint handling
+- `frontend/src/components/chat/` - Remove any checkpoint UI
+
+**Deliverable:**
+- Clean removal of all checkpoint-related code
+- No artifact detection via PostToolUse hooks
+- All artifacts come through action system
 
 **Effort:** 1 hour
 
@@ -1035,20 +1194,33 @@ export function hasActionBlocks(text: string): boolean {
 
 **Effort:** 2 hours
 
-#### Task 3.2: Agent Continuation Flow
+#### Task 3.2: Agent Continuation Flow (User-Triggered)
 
 **File:** `server/sdk-server.ts`
 
 **Deliverable:**
-- After action completes, inject result message
-- Agent sees structured result and continues conversation
-- Agent responds naturally and proposes next action
+- After action completes, store result but DO NOT auto-continue
+- Wait for user to click "Continue" or send a message
+- When user triggers, inject result context and continue agent
 
-**Agent Continuation Message Format:**
+**Key Principle:** Agent does NOT auto-respond after action completion. User controls pacing.
 
-When an action completes, we inject a user message (or system message) to inform the agent:
+**Stored Result Format:**
 
-**Success Message:**
+When action completes, store this for later injection when user continues:
+
+```typescript
+interface PendingContinuation {
+  sessionId: string;
+  action: ActionInstance;
+  result: ActionResult;
+  userParamChanges?: Record<string, { from: any; to: any }>;  // What user modified
+  timestamp: Date;
+}
+```
+
+**Continuation Message (injected when user triggers):**
+
 ```
 [Action Completed: Generate Hero Shot]
 
@@ -1056,49 +1228,68 @@ Result: SUCCESS
 Artifact: outputs/hero.png
 Duration: 12.3 seconds
 
-The user can now see the hero image in the chat. Continue the conversation naturally - comment on the result and suggest the next step in the pipeline.
+User Parameter Changes:
+- background: "studio-black" → "industrial" (user modified)
+
+The user has reviewed the result and wants to continue. Comment on the result
+(acknowledge their parameter changes if any) and suggest the next step.
 ```
 
-**Error Message:**
+**Error Message (if action failed after auto-retry):**
+
 ```
 [Action Failed: Generate Hero Shot]
 
 Error: FAL.ai API timeout after 60 seconds
 Error Code: TIMEOUT
+Auto-retry: Attempted once, still failed
 
-The generation failed. Suggest troubleshooting steps or offer to retry with different parameters.
+The generation failed. Suggest troubleshooting steps or offer to retry with
+different parameters.
 ```
 
 **Implementation:**
 
 ```typescript
-// After action execution completes
-async function continueAgentAfterAction(
+// Store pending continuation (don't auto-send)
+function storePendingContinuation(
   sessionId: string,
   action: ActionInstance,
-  result: ActionResult
+  result: ActionResult,
+  userChanges?: Record<string, { from: any; to: any }>
+): void {
+  pendingContinuations.set(sessionId, {
+    sessionId,
+    action,
+    result,
+    userParamChanges: userChanges,
+    timestamp: new Date()
+  });
+}
+
+// Called when user clicks Continue or sends message
+async function triggerAgentContinuation(
+  sessionId: string,
+  userMessage?: string
 ): Promise<void> {
-  const continuationMessage = result.success
-    ? `[Action Completed: ${action.label}]
+  const pending = pendingContinuations.get(sessionId);
+  if (!pending) {
+    // No pending continuation, just send user message normally
+    return aiClient.continueSession(sessionId, userMessage);
+  }
 
-Result: SUCCESS
-${result.artifact ? `Artifact: ${result.artifact}` : ''}
-${result.artifacts ? `Artifacts: ${result.artifacts.join(', ')}` : ''}
-${result.message || ''}
+  // Build continuation context
+  const context = buildContinuationMessage(pending);
+  const fullMessage = userMessage
+    ? `${context}\n\nUser says: "${userMessage}"`
+    : context;
 
-The user can now see the result. Continue the conversation naturally - comment on the result and suggest the next step.`
-    : `[Action Failed: ${action.label}]
-
-Error: ${result.error}
-
-The action failed. Suggest troubleshooting steps or offer to retry with different parameters.`;
-
-  // Resume the SDK session with the continuation message
-  await aiClient.continueSession(sessionId, continuationMessage);
+  pendingContinuations.delete(sessionId);
+  await aiClient.continueSession(sessionId, fullMessage);
 }
 ```
 
-**Effort:** 1.5 hours
+**Effort:** 2 hours
 
 ### Phase 4: Frontend (Day 2-3)
 
@@ -1108,12 +1299,27 @@ The action failed. Suggest troubleshooting steps or offer to retry with differen
 
 **Deliverable:**
 - Render action with icon and label
-- Generate form fields from parameter schema
-- Handle enum (dropdown), text (textarea), boolean (checkbox)
-- Execute button with loading state
-- Reset button
+- Generate form fields from ALL template parameters (not just agent-specified)
+- Handle enum (dropdown), text (textarea), boolean (checkbox), number (input)
+- Agent's suggested values shown as defaults
+- "Generate" button with loading state
+- "Reset" button to restore agent's original values
+- "Completed" state after execution
+- Track which params user modified (for reporting to agent)
 
 **Effort:** 3 hours
+
+#### Task 4.1b: ContinueButton Component
+
+**File:** `frontend/src/components/chat/ContinueButton.tsx`
+
+**Deliverable:**
+- Appears after action completes
+- Clicking triggers agent continuation
+- Hidden when user types in chat input (typing counts as continuation)
+- Clean visual design, prominent but not intrusive
+
+**Effort:** 0.5 hours
 
 #### Task 4.2: Action Detection in useWebSocket
 
@@ -1192,34 +1398,44 @@ The action failed. Suggest troubleshooting steps or offer to retry with differen
 │                      IMPLEMENTATION TIMELINE                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  DAY 1 (8 hours)                                                    │
-│  ═══════════════                                                    │
+│  DAY 1 (8 hours) - Foundation & Skill                               │
+│  ═══════════════════════════════════════                            │
 │  [████] Task 1.1: Types (1h)                                        │
 │  [██████] Task 1.2: Action Manager (1.5h)                           │
-│  [████████] Task 1.3: generate_hero action (2h)                     │
-│  [████████] Task 2.1: Orchestrator Prompt (2h)                      │
-│  [████] Task 2.2: Action Parser (1h)                                │
+│  [████████] Task 1.3: generate_hero executor (2h)                   │
+│  [████████] Task 2.1: action-proposer skill (2h)                    │
+│  [██████] Task 2.2: Orchestrator Prompt update (1.5h)               │
 │                                                                      │
-│  DAY 2 (8 hours)                                                    │
-│  ═══════════════                                                    │
-│  [████] Task 2.3: Update ai-client (1h)                             │
+│  DAY 2 (8.5 hours) - Server & Cleanup                               │
+│  ═══════════════════════════════════════                            │
+│  [██████] Task 2.3: ai-client cleanup (1.5h)                        │
+│  [████] Task 2.4: Remove checkpoint system (1h)                     │
 │  [████████] Task 3.1: WebSocket Handler (2h)                        │
-│  [██████] Task 3.2: Agent Continuation (1.5h)                       │
-│  [████████████] Task 4.1: ActionCard Component (3h)                 │
+│  [████████] Task 3.2: User-triggered continuation (2h)              │
+│  [████████] Task 4.1: ActionCard Component (2h) [start]             │
 │                                                                      │
-│  DAY 3 (8 hours)                                                    │
-│  ═══════════════                                                    │
+│  DAY 3 (8 hours) - Frontend                                         │
+│  ═══════════════════════════════                                    │
+│  [████] Task 4.1: ActionCard Component (1h) [finish]                │
+│  [██] Task 4.1b: ContinueButton Component (0.5h)                    │
 │  [████████] Task 4.2: useWebSocket updates (2h)                     │
 │  [████] Task 4.3: ChatView integration (1h)                         │
-│  [████████████████] Task 5.1: All Action Templates (4h)             │
+│  [██████████████] Task 5.1: All Action Templates (3.5h)             │
 │                                                                      │
-│  DAY 4 (5 hours)                                                    │
-│  ═══════════════                                                    │
+│  DAY 4 (5.5 hours) - Testing & Polish                               │
+│  ═══════════════════════════════════════                            │
 │  [████████] Task 6.1: E2E Testing (2h)                              │
 │  [████████] Task 6.2: UI Polish (2h)                                │
-│  [████] Task 6.3: Documentation (1h)                                │
+│  [██████] Task 6.3: Documentation + Commits (1.5h)                  │
 │                                                                      │
-│  TOTAL: ~29 hours over 4 days                                       │
+│  TOTAL: ~30 hours over 4 days                                       │
+│                                                                      │
+│  GIT COMMITS (Incremental):                                         │
+│  ─────────────────────────                                          │
+│  Day 1 end: "feat: Add action types, manager, and proposer skill"   │
+│  Day 2 end: "feat: WebSocket action handling, remove YOLO/checkpoint"│
+│  Day 3 end: "feat: ActionCard UI with user continuation"            │
+│  Day 4 end: "feat: Complete action instance pattern MVP"            │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -1249,32 +1465,34 @@ The action failed. Suggest troubleshooting steps or offer to retry with differen
 
 ## Risks & Mitigations
 
-### Risk 1: Agent Ignores Action Format
+### Risk 1: Agent Ignores Action Skill
 
-**Risk:** Agent executes Bash directly instead of proposing actions.
+**Risk:** Agent executes Bash directly instead of using action-proposer skill.
 
 **Mitigation:**
+- PreToolUse hook BLOCKS Bash calls containing generation scripts
+- Agent receives clear error: "Use action-proposer skill instead"
 - Strong prompt instructions with examples
-- PreToolUse hook to block Bash for generation scripts
-- Fallback: Parse Bash commands and convert to actions
+- No fallback needed - blocking is enforced
 
 ### Risk 2: Complex Parameter UIs
 
 **Risk:** Some parameters hard to represent in simple form.
 
 **Mitigation:**
-- Start with enum/text/boolean only
+- Start with enum/text/boolean/number only
+- Show ALL template parameters (not just agent-specified)
 - Add advanced controls in future iterations
-- Allow "Advanced" expansion for power users
 
-### Risk 3: Agent Continuation Breaks
+### Risk 3: Agent Continuation Context
 
-**Risk:** Agent doesn't respond well after action results.
+**Risk:** Agent doesn't respond well when user triggers continuation.
 
 **Mitigation:**
-- Clear result message format
-- Examples in prompt for post-action responses
-- Test extensively with different result types
+- Clear result message format includes artifact + param changes
+- Examples in prompt for post-continuation responses
+- User can type specific feedback instead of just clicking Continue
+- Test extensively with different scenarios
 
 ### Risk 4: Performance Issues
 
@@ -1282,8 +1500,19 @@ The action failed. Suggest troubleshooting steps or offer to retry with differen
 
 **Mitigation:**
 - Immediate loading state on click
-- Progress events during execution
-- Optimistic UI updates
+- Progress events during execution (especially for long video generation)
+- Auto-retry once for transient failures (user doesn't see first failure)
+- Clear progress indication: "Generating (1/5 clips)..."
+
+### Risk 5: User Doesn't Know to Continue
+
+**Risk:** User waits for agent response, not realizing they need to click Continue.
+
+**Mitigation:**
+- Prominent "Continue" button after action completes
+- Visual indication that agent is waiting
+- Chat input placeholder changes to "Type or click Continue..."
+- Consider: auto-continue after timeout (future enhancement)
 
 ---
 
@@ -1360,7 +1589,8 @@ interface ExecuteActionMessage {
   type: 'execute_action';
   sessionId: string;
   instanceId: string;                    // Which instance to execute
-  params: Record<string, any>;           // User-modified params (may differ from original)
+  params: Record<string, any>;           // User's final params (may differ from agent's)
+  originalParams: Record<string, any>;   // Agent's original params (for diff)
 }
 
 // Cancel a running action
@@ -1376,11 +1606,26 @@ interface DismissActionMessage {
   sessionId: string;
   instanceId: string;
 }
+
+// Trigger agent continuation (user clicked Continue or sent message)
+interface ContinueMessage {
+  type: 'continue';
+  sessionId: string;
+  content?: string;                      // Optional user message
+}
 ```
 
 **Server → Client Messages:**
 
 ```typescript
+// New action instance created (from action-proposer skill)
+interface ActionInstanceMessage {
+  type: 'action_instance';
+  sessionId: string;
+  instance: ActionInstance;              // Full instance with template info
+  template: ActionTemplate;              // Template schema for form rendering
+}
+
 // Action execution started
 interface ActionStartMessage {
   type: 'action_start';
@@ -1398,6 +1643,7 @@ interface ActionProgressMessage {
   stage: string;                         // e.g., "Uploading to FAL.ai"
   message: string;                       // Human-readable status
   progress?: number;                     // 0-100 percentage (optional)
+  retryAttempt?: number;                 // 1 if auto-retrying
 }
 
 // Action completed successfully
@@ -1410,10 +1656,11 @@ interface ActionCompleteMessage {
     artifact?: string;                   // Single output file path
     artifacts?: string[];                // Multiple output files
     message?: string;                    // Success message
+    duration?: number;                   // Execution time in ms
   };
 }
 
-// Action failed
+// Action failed (after auto-retry if applicable)
 interface ActionErrorMessage {
   type: 'action_error';
   sessionId: string;
@@ -1421,69 +1668,120 @@ interface ActionErrorMessage {
   error: {
     code: string;                        // e.g., "TIMEOUT", "API_ERROR"
     message: string;                     // Human-readable error
-    retryable: boolean;                  // Can user retry?
+    retryable: boolean;                  // Can user manually retry?
+    autoRetried: boolean;                // Was auto-retry attempted?
   };
 }
 
-// Assistant message with embedded actions
-interface AssistantMessageWithActions {
-  type: 'assistant_message';
+// Continuation ready signal (after action complete, waiting for user)
+interface AwaitingContinuationMessage {
+  type: 'awaiting_continuation';
   sessionId: string;
-  content: string;                       // Text with action blocks stripped
-  actions?: ActionInstance[];            // Parsed action instances
+  instanceId: string;                    // Which action completed
 }
 ```
 
-**Message Flow Diagram:**
+**Message Flow Diagram (Two-Step Creative Flow):**
 
 ```
+═══════════════════════════════════════════════════════════════════
+STEP 1: CREATIVE DISCUSSION (No action yet)
+═══════════════════════════════════════════════════════════════════
+
 User types prompt
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ { type: 'chat', sessionId, content: "Create a moody shoot" }   │
+│ { type: 'chat', content: "Create a Star Wars themed shoot" }   │
 └────────────────────────────────────────────────────────────────┘
      │
-     ▼ (Agent responds with action block)
+     ▼ (Agent discusses options - NO action proposed)
      │
 ┌────────────────────────────────────────────────────────────────┐
 │ { type: 'assistant_message',                                    │
-│   content: "For a moody aesthetic, I suggest...",              │
-│   actions: [{ instanceId: "abc", templateId: "generate_hero",  │
-│               params: { pose: "editorial-drama", ... } }] }    │
+│   content: "For Star Wars, I have a few directions:            │
+│             🔴 Sith Lord - deep shadows, red lighting...       │
+│             🔵 Jedi Serenity - ethereal glow...                │
+│             Which resonates?" }                                 │
 └────────────────────────────────────────────────────────────────┘
      │
-     ▼ (User modifies params, clicks Generate)
+     ▼ (User chooses direction)
+     │
+┌────────────────────────────────────────────────────────────────┐
+│ { type: 'chat', content: "Sith Lord looks perfect" }           │
+└────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+STEP 2: ACTION PROPOSAL (Full prompt embedded)
+═══════════════════════════════════════════════════════════════════
+     │
+     ▼ (Agent responds + calls action-proposer with FULL prompt)
+     │
+┌────────────────────────────────────────────────────────────────┐
+│ { type: 'assistant_message',                                    │
+│   content: "Great choice! Here's the Sith Lord hero:" }        │
+└────────────────────────────────────────────────────────────────┘
+     │
+┌────────────────────────────────────────────────────────────────┐
+│ { type: 'action_instance',                                      │
+│   instance: {                                                   │
+│     instanceId: "abc",                                          │
+│     templateId: "generate_hero",                                │
+│     label: "Generate Sith Lord Hero",                           │
+│     params: {                                                   │
+│       prompt: "Full-body fashion photograph, powerful Sith     │
+│                Lord aesthetic, editorial-drama pose, deep       │
+│                shadows with red accent lighting...",            │
+│       aspectRatio: "3:2"                                        │
+│     }                                                           │
+│   },                                                            │
+│   template: { parameters: { prompt: {...}, aspectRatio: {...} }}│
+│ }                                                               │
+└────────────────────────────────────────────────────────────────┘
+     │
+     ▼ (Frontend renders ActionCard with editable prompt)
+     ▼ (User tweaks prompt: adds "cape flowing in wind")
+     ▼ (User clicks Generate)
      │
 ┌────────────────────────────────────────────────────────────────┐
 │ { type: 'execute_action', instanceId: "abc",                   │
-│   params: { pose: "relaxed-natural", ... } }  ← user changed   │
+│   params: { prompt: "...cape flowing in wind...", ... },       │
+│   originalParams: { prompt: "...(original)...", ... } }        │
+└────────────────────────────────────────────────────────────────┘
+     │
+     ▼ (Execution with progress)
+     │
+┌────────────────────────────────────────────────────────────────┐
+│ { type: 'action_start' } → { type: 'action_progress' } →       │
+│ { type: 'action_complete', artifact: "outputs/hero.png" }      │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ { type: 'action_start', instanceId: "abc", label: "..." }      │
+│ { type: 'awaiting_continuation', instanceId: "abc" }           │
 └────────────────────────────────────────────────────────────────┘
      │
-     ▼ (Multiple progress updates)
+     ▼ (User reviews artifact, clicks Continue)
      │
 ┌────────────────────────────────────────────────────────────────┐
-│ { type: 'action_progress', instanceId: "abc",                  │
-│   stage: "Generating", message: "Uploading to FAL.ai..." }     │
+│ { type: 'continue', content: "love it!" }                      │
 └────────────────────────────────────────────────────────────────┘
      │
-     ▼
-┌────────────────────────────────────────────────────────────────┐
-│ { type: 'action_complete', instanceId: "abc",                  │
-│   result: { success: true, artifact: "outputs/hero.png" } }    │
-└────────────────────────────────────────────────────────────────┘
-     │
-     ▼ (Agent continues conversation)
+     ▼ (Agent notified of result + prompt changes)
      │
 ┌────────────────────────────────────────────────────────────────┐
 │ { type: 'assistant_message',                                    │
-│   content: "The moody lighting looks great! Ready for...",     │
-│   actions: [{ templateId: "generate_contact_sheet", ... }] }   │
+│   content: "The cape adds great movement! Ready for the        │
+│             contact sheet? Same Sith Lord energy..." }         │
+└────────────────────────────────────────────────────────────────┘
+     │
+     ▼ (Agent proposes next action with full prompt)
+     │
+┌────────────────────────────────────────────────────────────────┐
+│ { type: 'action_instance',                                      │
+│   instance: { templateId: "generate_contact_sheet",             │
+│               params: { prompt: "...", ... } } }                │
 └────────────────────────────────────────────────────────────────┘
 ```
 
