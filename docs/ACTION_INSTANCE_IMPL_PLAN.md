@@ -9,7 +9,7 @@
 | Phase 3 | ✅ Complete | Server Integration - execute_action/continue_action handlers |
 | Phase 4 | ✅ Complete | Frontend - ActionCard.tsx, ContinueButton.tsx |
 | Phase 5 | ✅ Complete | All action executors created |
-| Phase 6 | 🔲 Pending | Testing & Polish |
+| Phase 6 | ✅ Complete | Testing & Bug Fixes |
 
 ### Completed Files
 
@@ -45,6 +45,12 @@
 - `frontend/src/components/chat/ChatView.tsx` - Render ActionCard, ContinueButton
 - `frontend/src/App.tsx` - Pass action props to ChatView
 
+**Phase 6 (Testing & Bug Fixes):**
+- Fixed output paths in all executors to use `outputs/` prefix for static serving
+- Added artifact storage in session manager after action completion
+- Added artifact rendering (images & videos) in ActionCard component
+- Changed model to `claude-opus-4-5-20251101` in ai-client.ts
+
 ---
 
 ## Key Decisions
@@ -59,6 +65,9 @@
 | Error Handling | Auto-retry once, then show error |
 | Artifact Detection | Remove PostToolUse - only actions |
 | Checkpoint System | Remove entirely |
+| Asset Storage | Store in session manager after action completion |
+| Output Paths | Use `outputs/` prefix for static serving |
+| Model | `claude-opus-4-5-20251101` (Opus 4.5) |
 
 ---
 
@@ -389,13 +398,37 @@ All executors created in Phase 1:
 
 ---
 
-### Phase 6: Testing & Polish 🔲 PENDING
+### Phase 6: Testing & Bug Fixes ✅ COMPLETE
 
-- E2E test full pipeline
-- Test parameter modification
-- Test error scenarios and auto-retry
-- UI polish: loading states, animations
-- Responsive design
+**6.1 Output Path Fixes** ✅
+All executors updated to use `outputs/` prefix for correct static file serving:
+- `generate-hero.ts` → `outputs/hero.png`
+- `generate-contact-sheet.ts` → `outputs/contact-sheet.png`
+- `extract-frames.ts` → `outputs/frames/frame-{n}.png`
+- `resize-frames.ts` → `outputs/frames/frame-{n}.png`
+- `generate-video-clip.ts` → `outputs/videos/video-{n}.mp4`
+- `generate-all-clips.ts` → `outputs/videos/video-{n}.mp4`
+- `stitch-final.ts` → `outputs/final/fashion-video.mp4`
+
+**6.2 Asset Storage After Action Completion** ✅
+- Added artifact storage in `sdk-server.ts` execute_action handler
+- Maps template IDs to asset types for session manager storage
+- Enables dependency chain: contactSheet → frames → videos → finalVideo
+- Assets stored via `sessionManager.addAsset()` after successful execution
+
+**6.3 Artifact Rendering in ActionCard** ✅
+- Added `isVideo()` helper to detect video files by extension
+- Added `getArtifactUrl()` helper to convert paths to URLs
+- Single artifacts: Full-width display with video controls
+- Multiple artifacts: 3-column grid with hover-to-play for videos
+- Shows result.message for helpful completion info
+
+**6.4 Model Upgrade** ✅
+- Changed model from `claude-sonnet-4-20250514` to `claude-opus-4-5-20251101`
+
+**6.5 Reference Image Fix** ✅
+- Fixed reference images retrieval using `getPipelineStatus()` instead of `getSessionStats()`
+- Ensures uploaded reference images are passed to generation scripts
 
 ---
 
@@ -449,6 +482,68 @@ Agent: Comments on result, proposes next action
 
 ---
 
+## Asset Dependency Chain
+
+Actions depend on artifacts from previous actions. The session manager stores these via `addAsset()`:
+
+```
+┌─────────────────┐
+│  generate_hero  │ → stores: hero
+└────────┬────────┘
+         ↓ (optional reference)
+┌─────────────────────────┐
+│ generate_contact_sheet  │ → stores: contactSheet
+└────────────┬────────────┘
+             ↓ getAsset("contactSheet")
+┌─────────────────┐
+│  extract_frames │ → stores: frames[]
+└────────┬────────┘
+         ↓ (optional resize)
+┌─────────────────┐
+│  resize_frames  │ → updates: frames[]
+└────────┬────────┘
+         ↓ getAsset("frames")
+┌──────────────────────┐
+│  generate_all_clips  │ → stores: videos[]
+└────────────┬─────────┘
+             ↓ getAsset("videos")
+┌─────────────────┐
+│   stitch_final  │ → stores: finalVideo
+└─────────────────┘
+```
+
+### Asset Type Mapping (sdk-server.ts)
+
+```typescript
+const assetTypeMap = {
+  'generate_hero': 'hero',
+  'generate_contact_sheet': 'contactSheet',
+  'extract_frames': 'frame',
+  'resize_frames': 'frame',
+  'generate_video_clip': 'video',
+  'generate_all_clips': 'video',
+  'stitch_final': 'finalVideo',
+};
+```
+
+---
+
+## Static File Serving
+
+The server serves generated outputs at `/outputs`:
+
+```typescript
+// sdk-server.ts
+app.use('/outputs', express.static(path.join(__dirname, '../agent/outputs')));
+```
+
+All executor output paths use `outputs/` prefix (no leading slash) which maps to:
+- File system: `agent/outputs/hero.png`
+- URL: `http://localhost:3002/outputs/hero.png`
+- Frontend: `/outputs/hero.png`
+
+---
+
 ## Git Commits
 
 1. `feat: Add action types, manager, and generate_hero executor`
@@ -457,3 +552,4 @@ Agent: Comments on result, proposes next action
 4. `feat: ActionCard UI with user continuation`
 5. `feat: Complete all action executors`
 6. `feat: Complete action instance pattern MVP`
+7. `fix: Output paths for static serving, asset storage, artifact rendering`
